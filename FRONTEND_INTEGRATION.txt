@@ -1,0 +1,116 @@
+
+================================================================================
+ContextIQ: Frontend Integration Guide & API Documentation
+================================================================================
+
+1. SYSTEM OVERVIEW
+------------------
+ContextIQ is an Agentic RAG system that provides "Context-Aware Shopping Assistance". 
+Unlike a standard chatbot, it can:
+- "See" images uploaded by the user.
+- "Read" external links (YouTube, Blogs) provided by the user.
+- "Predict" future needs based on purchase intent.
+
+2. ARCHITECTURE & PIPELINE
+--------------------------
+Understanding how the backend works will help you display the "Thinking" state.
+
+[Frontend] --> [API Gateway (FastAPI)] 
+                     |
+                     v
+             [Agent Orchestrator (Gemini 2.5 Pro)]
+                     |
+        ------------------------------------------
+        |                  |                     |
+   [Vision Tool]     [Scraper Tool]       [Vector DB]
+   (Sees Images)     (Reads Links)      (Finds Products)
+        |                  |                     |
+        ------------------------------------------
+                     |
+                     v
+             [Predictive Engine]
+        (Generates "Future Insights")
+                     |
+                     v
+            [Final Response JSON]
+
+3. CONNECTION DETAILS
+---------------------
+Base URL: http://localhost:8002
+(Note: Port may vary if 8002 is busy, check backend console logs)
+
+4. API ENDPOINTS
+----------------
+
+A. Health Check
+   Use this to verify the backend is online before allowing user input.
+   
+   - URL: /health
+   - Method: GET
+   - Response:
+     {
+       "status": "ContextIQ is Online"
+     }
+
+B. Chat Agent (The "Main" Endpoint)
+   This is a MULTIMODAL endpoint. You must send data as `multipart/form-data`.
+   
+   - URL: /agent/chat
+   - Method: POST
+   - Content-Type: multipart/form-data
+   
+   - Request Parameters (Form Fields):
+     1. user_id (Required, String): 
+        - A unique ID for the user (e.g., "user_123" or a UUID). 
+        - The backend uses this to maintain session history.
+        
+     2. message (Optional, String): 
+        - The user's text query.
+        - Example: "I need a gaming laptop."
+        
+     3. context_link (Optional, String): 
+        - A URL the user wants the agent to analyze.
+        - Example: "https://youtube.com/watch?v=..."
+        
+     4. image (Optional, File): 
+        - An image file (JPG/PNG) uploaded by the user.
+        - Use this for "Visual Search" features.
+
+   - Example Request (JavaScript/Fetch):
+     const formData = new FormData();
+     formData.append("user_id", "session_v1");
+     formData.append("message", "Does this look good?");
+     formData.append("image", fileInput.files[0]); // Optional
+     
+     await fetch("http://localhost:8002/agent/chat", {
+       method: "POST",
+       body: formData
+     });
+
+   - Response Format (JSON):
+     {
+       "agent_response": "Based on the image, that is a Keychron Q1. We have it in stock!",
+       "session_id": "session_v1"
+     }
+
+5. UI FEATURES TO IMPLEMENT
+---------------------------
+To make the demo "Winning" level, consider these UI elements:
+
+1. "Analyzing Link" Spinner:
+   - If the user provides a `context_link`, show a spinner saying "Agent is reading the website..." while waiting for the response.
+
+2. "Vision" Badge:
+   - If the user uploads an image, show a small "Eyes" icon indicating the AI is "looking" at the photo.
+
+3. "Predictive Insight" Highlight:
+   - The agent will often end its response with a "Future Insight". 
+   - Try to parse this or highlight it in a different color (e.g., "💡 Pro Tip: Since you are buying X, you might need Y").
+
+6. ERROR HANDLING
+-----------------
+- 400 Bad Request: Missing `user_id` or no input provided.
+- 500 Internal Error: Backend crash (usually API Key issue or model overload).
+  - Action: Display "Brain Freeze! Please try again." to the user.
+
+================================================================================
