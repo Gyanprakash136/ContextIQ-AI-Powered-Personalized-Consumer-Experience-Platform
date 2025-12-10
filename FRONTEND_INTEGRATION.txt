@@ -113,7 +113,60 @@ To make the demo "Winning" level, consider these UI elements:
    - Each card should show: Image, Name, Price, and a "Buy Now" button opening the link.
 
 2. "Searching the Web" Indicator:
-   - If the agent response says "I found this online" or "Checking the web", show a small "Globe" icon.
+6. API RESPONSE EXAMPLES (LIVE)
+-------------------------------
+
+1. **GET /health**
+   - **Response**:
+     ```json
+     {
+       "status": "ContextIQ is Online"
+     }
+     ```
+
+2. **POST /agent/chat**
+   - **Scenario A: Standard Response (Text Only)**
+     ```json
+     {
+       "agent_response": "Hello! How can I help you regarding basketball shoes today?",
+       "session_id": "user_123",
+       "products": []
+     }
+     ```
+
+   - **Scenario B: Product Recommendations (Winning UI)**
+     ```json
+     {
+       "agent_response": "I found these top 3 Nike basketball shoes under ₹5000 on Amazon and Flipkart.",
+       "session_id": "user_123",
+       "products": [
+         {
+           "name": "Nike Precision 6 Basketball Shoes",
+           "price": "₹4,295",
+           "marketplace": "Amazon",
+           "link": "https://amazon.in/dp/B0B...",
+           "image": "https://m.media-amazon.com/...",
+           "reason": "Best traction and stability for the price."
+         },
+         {
+           "name": "Nike Air Max Impact 4",
+           "price": "₹4,995",
+           "marketplace": "Flipkart",
+           "link": "https://flipkart.com/...",
+           "image": "...",
+           "reason": "Great cushioning."
+         }
+       ]
+     }
+     ```
+
+   - **Scenario C: Error (Auth Failed)**
+     - Status: 403 Forbidden
+     ```json
+     {
+       "detail": "Invalid authentication credentials"
+     }
+     ```
 
 2. "Analyzing Link" Spinner:
    - If the user types a URL, show a "Reading Link..." status briefly after sending.

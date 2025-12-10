@@ -188,6 +188,7 @@ async def chat_endpoint(
             if isinstance(parsed_data, dict):
                 final_response["agent_response"] = parsed_data.get("agent_response", raw_output)
                 final_response["products"] = parsed_data.get("products", [])
+                final_response["predictive_insight"] = parsed_data.get("predictive_insight", None)
                 
         except json.JSONDecodeError:
             print("⚠️ Agent returned non-JSON text. Falling back to raw output.")
