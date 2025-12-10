@@ -6,7 +6,6 @@ import ReactMarkdown from 'react-markdown';
 import { format } from 'date-fns';
 import { Eye, Lightbulb } from 'lucide-react';
 import { ProductCard } from './ProductCard';
-import { ProductCard } from './ProductCard';
 
 interface MessageBubbleProps {
   message: Message;

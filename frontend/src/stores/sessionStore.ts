@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { auth, googleProvider } from '@/lib/firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
 import { Product } from '@/api/api';
 
 export interface User {
@@ -9,16 +9,6 @@ export interface User {
   email: string;
   name: string;
   avatar?: string;
-}
-
-import { Product } from '../api/realApi';
-
-export interface ChatSession {
-  id: string;
-  title: string;
-  messages: Message[];
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface Message {
@@ -29,7 +19,6 @@ export interface Message {
   imageUrl?: string;
   products?: Product[];
   timestamp: Date;
-  products?: Product[];
 }
 
 export interface ChatSession {
