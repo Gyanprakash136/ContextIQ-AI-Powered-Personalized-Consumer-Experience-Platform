@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Message } from '@/stores/sessionStore';
 
 import { Lightbox } from './Lightbox';
+import ReactMarkdown from 'react-markdown';
 import { format } from 'date-fns';
 import { Eye, Lightbulb } from 'lucide-react';
+import { ProductCard } from './ProductCard';
 import { ProductCard } from './ProductCard';
 
 interface MessageBubbleProps {
@@ -74,9 +76,29 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
 
         {mainContent && (
-          <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
-            {mainContent}
-          </p>
+          <div className="text-sm text-foreground leading-relaxed">
+            <ReactMarkdown
+              components={{
+                a: ({ node, ...props }) => (
+                  <a {...props} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline" />
+                ),
+                strong: ({ node, ...props }) => (
+                  <span {...props} className="font-bold" />
+                ),
+                ul: ({ node, ...props }) => (
+                  <ul {...props} className="list-disc pl-4 my-2 space-y-1" />
+                ),
+                ol: ({ node, ...props }) => (
+                  <ol {...props} className="list-decimal pl-4 my-2 space-y-1" />
+                ),
+                p: ({ node, ...props }) => (
+                  <p {...props} className="mb-2 last:mb-0" />
+                )
+              }}
+            >
+              {mainContent}
+            </ReactMarkdown>
+          </div>
         )}
 
         {/* Predictive Insight Highlight */}
@@ -91,11 +113,11 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Product Recommendations */}
+        {/* Product Cards Carousel */}
         {message.products && message.products.length > 0 && (
-          <div className="mt-4 flex overflow-x-auto pb-4 gap-2 snap-x custom-scrollbar">
-            {message.products.map((product, idx) => (
-              <div key={idx} className="snap-center shrink-0 w-64">
+          <div className="mt-4 -mx-2 px-2 overflow-x-auto pb-4 custom-scrollbar flex gap-4 snap-x">
+            {message.products.map((product, index) => (
+              <div key={index} className="snap-center">
                 <ProductCard product={product} />
               </div>
             ))}

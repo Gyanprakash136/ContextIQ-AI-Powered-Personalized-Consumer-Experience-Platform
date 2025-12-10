@@ -114,14 +114,13 @@ export function ChatLayout() {
 =======
       // Real Backend API call
       // We pass the raw File object if we have it, otherwise null
-      const response = await sendChatToBackend(content, imageFile);
->>>>>>> b471a44 (connected backend with frontend)
+      const { agent_response, products } = await sendChatToBackend(content, imageFile);
 
       addMessage({
         sender: 'assistant',
         type: 'text',
-        content: response.agent_response,
-        products: response.products // Pass products to store
+        content: agent_response,
+        products: products
       });
     } catch (error) {
 <<<<<<< HEAD

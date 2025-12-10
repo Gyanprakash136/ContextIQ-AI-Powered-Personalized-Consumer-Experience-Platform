@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { auth, googleProvider } from '@/lib/firebase';
 import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { Product } from '@/api/api';
 
 export interface User {
   id: string;
@@ -26,6 +27,7 @@ export interface Message {
   type: 'text' | 'image';
   content: string;
   imageUrl?: string;
+  products?: Product[];
   timestamp: Date;
   products?: Product[];
 }
@@ -46,6 +48,7 @@ interface SessionState {
 
   // Auth actions
   login: () => Promise<void>;
+  loginAsGuest: () => void;
   logout: () => Promise<void>;
 
   // Chat actions
@@ -87,6 +90,15 @@ export const useSessionStore = create<SessionState>()(
             console.error("Login failed:", error);
             throw error;
           }
+        },
+
+        loginAsGuest: () => {
+          const guestUser: User = {
+            id: 'guest-' + Math.random().toString(36).substring(2, 9),
+            email: 'guest@example.com',
+            name: 'Guest User',
+          };
+          set({ user: guestUser, isAuthenticated: true });
         },
 
         logout: async () => {

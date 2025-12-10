@@ -17,10 +17,28 @@ export async function checkBackendHealth(): Promise<boolean> {
 /**
  * Main chat function to send message and/or image to the backend agent.
  */
+export interface Product {
+    name: string;
+    price: string;
+    marketplace: string;
+    link: string;
+    image: string;
+    reason?: string;
+}
+
+export interface ChatResponse {
+    agent_response: string;
+    session_id: string;
+    products: Product[];
+}
+
+/**
+ * Main chat function to send message and/or image to the backend agent.
+ */
 export async function sendChatToBackend(
     message: string,
     imageFile?: File | null
-): Promise<string> {
+): Promise<ChatResponse> {
     // 1. Get Firebase Token
     const currentUser = auth.currentUser;
     if (!currentUser) {
@@ -57,8 +75,8 @@ export async function sendChatToBackend(
         }
 
         const data = await response.json();
-        // Expected format: { "agent_response": "...", "session_id": "..." }
-        return data.agent_response;
+        // Expected format: { "agent_response": "...", "session_id": "...", "products": [...] }
+        return data as ChatResponse;
 
     } catch (error) {
         console.error("Chat API Error:", error);
@@ -80,5 +98,6 @@ export async function mockChatResponse(message: string, imageUrl?: string): Prom
 
     // NOTE: This shim is to make existing components valid without changing every single import immediately.
     // But we should update ChatLayout.tsx to use sendChatToBackend directly.
-    return sendChatToBackend(message, null);
+    const res = await sendChatToBackend(message, null);
+    return res.agent_response;
 }
