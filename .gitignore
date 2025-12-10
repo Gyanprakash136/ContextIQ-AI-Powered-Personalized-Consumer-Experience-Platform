@@ -1,9 +1,9 @@
 
 __pycache__/
 *.pyc
-.env
+
 venv/
 chroma_data/
 sessions/
 .DS_Store
-serviceAccountKey.json
+frontend/.env

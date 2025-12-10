@@ -1,11 +1,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { auth, googleProvider } from '@/lib/firebase';
+import { signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 
 export interface User {
   id: string;
   email: string;
   name: string;
-  isGuest: boolean;
+  avatar?: string;
 }
 
 import { Product } from '../api/realApi';
@@ -41,13 +43,11 @@ interface SessionState {
   isAuthenticated: boolean;
   currentSessionId: string | null;
   sessions: ChatSession[];
-  
+
   // Auth actions
-  login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
-  loginAsGuest: () => void;
-  logout: () => void;
-  
+  login: () => Promise<void>;
+  logout: () => Promise<void>;
+
   // Chat actions
   createSession: () => string;
   setCurrentSession: (sessionId: string) => void;
@@ -59,96 +59,82 @@ const generateId = () => Math.random().toString(36).substring(2, 15);
 
 export const useSessionStore = create<SessionState>()(
   persist(
-    (set, get) => ({
-      user: null,
-      isAuthenticated: false,
-      currentSessionId: null,
-      sessions: [],
+    (set, get) => {
+      // Initialize Auth Listener
+      // Note: Zustand persist might conflict with async listeners if not careful.
+      // We'll set up the listener separately or rely on checking auth state on mount in App.tsx
 
-      login: async (email: string, _password: string) => {
-        // Mock API call
-        await new Promise(resolve => setTimeout(resolve, 800));
-        
-        const user: User = {
-          id: generateId(),
-          email,
-          name: email.split('@')[0],
-          isGuest: false,
-        };
-        
-        set({ user, isAuthenticated: true });
-      },
+      return {
+        user: null,
+        isAuthenticated: false,
+        currentSessionId: null,
+        sessions: [],
 
-      signup: async (name: string, email: string, _password: string) => {
-        // Mock API call
-        await new Promise(resolve => setTimeout(resolve, 800));
-        
-        const user: User = {
-          id: generateId(),
-          email,
-          name,
-          isGuest: false,
-        };
-        
-        set({ user, isAuthenticated: true });
-      },
+        login: async () => {
+          try {
+            const result = await signInWithPopup(auth, googleProvider);
+            const fbUser = result.user;
 
-      loginAsGuest: () => {
-        const user: User = {
-          id: generateId(),
-          email: 'guest@demo.local',
-          name: 'Guest',
-          isGuest: true,
-        };
-        
-        set({ user, isAuthenticated: true });
-      },
+            const user: User = {
+              id: fbUser.uid,
+              email: fbUser.email || '',
+              name: fbUser.displayName || 'User',
+              avatar: fbUser.photoURL || undefined,
+            };
 
-      logout: () => {
-        set({ 
-          user: null, 
-          isAuthenticated: false, 
-          currentSessionId: null,
-          sessions: [],
-        });
-      },
+            set({ user, isAuthenticated: true });
+          } catch (error) {
+            console.error("Login failed:", error);
+            throw error;
+          }
+        },
 
-      createSession: () => {
-        const newSession: ChatSession = {
-          id: generateId(),
-          title: 'New Chat',
-          messages: [],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        
-        set(state => ({
-          sessions: [newSession, ...state.sessions],
-          currentSessionId: newSession.id,
-        }));
-        
-        return newSession.id;
-      },
+        logout: async () => {
+          await signOut(auth);
+          set({
+            user: null,
+            isAuthenticated: false,
+            currentSessionId: null,
+            sessions: [],
+          });
+        },
 
-      setCurrentSession: (sessionId: string) => {
-        set({ currentSessionId: sessionId });
-      },
+        createSession: () => {
+          const newSession: ChatSession = {
+            id: generateId(),
+            title: 'New Chat',
+            messages: [],
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
 
-      addMessage: (message) => {
-        const { currentSessionId, sessions } = get();
-        
-        if (!currentSessionId) return;
-        
-        const newMessage: Message = {
-          ...message,
-          id: generateId(),
-          timestamp: new Date(),
-        };
-        
-        set({
-          sessions: sessions.map(session =>
-            session.id === currentSessionId
-              ? {
+          set(state => ({
+            sessions: [newSession, ...state.sessions],
+            currentSessionId: newSession.id,
+          }));
+
+          return newSession.id;
+        },
+
+        setCurrentSession: (sessionId: string) => {
+          set({ currentSessionId: sessionId });
+        },
+
+        addMessage: (message) => {
+          const { currentSessionId, sessions } = get();
+
+          if (!currentSessionId) return;
+
+          const newMessage: Message = {
+            ...message,
+            id: generateId(),
+            timestamp: new Date(),
+          };
+
+          set({
+            sessions: sessions.map(session =>
+              session.id === currentSessionId
+                ? {
                   ...session,
                   messages: [...session.messages, newMessage],
                   updatedAt: new Date(),
@@ -156,21 +142,22 @@ export const useSessionStore = create<SessionState>()(
                     ? message.content.slice(0, 30) + (message.content.length > 30 ? '...' : '')
                     : session.title,
                 }
-              : session
-          ),
-        });
-      },
+                : session
+            ),
+          });
+        },
 
-      getCurrentSession: () => {
-        const { currentSessionId, sessions } = get();
-        return sessions.find(s => s.id === currentSessionId) || null;
-      },
-    }),
+        getCurrentSession: () => {
+          const { currentSessionId, sessions } = get();
+          return sessions.find(s => s.id === currentSessionId) || null;
+        },
+      };
+    },
     {
       name: 'chat-session-storage',
       partialize: (state) => ({
-        user: state.user,
-        isAuthenticated: state.isAuthenticated,
+        // We generally don't persist 'user' in local storage if we want to rely on Firebase Auth state
+        // But for offline/optimistic UI, we can. Firebase SDK handles token persistence.
         sessions: state.sessions,
         currentSessionId: state.currentSessionId,
       }),

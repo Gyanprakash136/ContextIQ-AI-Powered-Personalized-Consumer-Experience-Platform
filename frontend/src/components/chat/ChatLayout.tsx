@@ -4,7 +4,11 @@ import { ChatSidebar } from './ChatSidebar';
 import { ChatInput } from './ChatInput';
 import { MessageBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
+<<<<<<< HEAD
 import { sendMessageToBackend } from '@/api/realApi';
+=======
+import { sendChatToBackend } from '@/api/api';
+>>>>>>> b471a44 (connected backend with frontend)
 import { MessageSquare, Sparkles, LogOut, Home, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -78,15 +82,16 @@ export function ChatLayout() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentSession?.messages]);
 
-  const handleSend = async (content: string, imageUrl?: string) => {
-    if (!content && !imageUrl) return;
+
+  const handleSend = async (content: string, imageUrl?: string, imageFile?: File | null) => {
+    if (!content && !imageUrl && !imageFile) return;
 
     // Add user message
     addMessage({
       sender: 'user',
-      type: imageUrl ? 'image' : 'text',
+      type: (imageUrl || imageFile) ? 'image' : 'text',
       content,
-      imageUrl,
+      imageUrl: imageUrl || (imageFile ? URL.createObjectURL(imageFile) : undefined),
     });
 
     // Check if message contains a link
@@ -95,6 +100,7 @@ export function ChatLayout() {
     setIsAnalyzingLink(hasLink);
 
     try {
+<<<<<<< HEAD
       // Real API Call
       // Convert base64 imageUrl to File if present (simplified for now, assumes base64)
       let imageFile: File | undefined;
@@ -105,6 +111,11 @@ export function ChatLayout() {
       }
 
       const response = await sendMessageToBackend(content, imageFile, undefined, user?.id, currentSessionId || undefined);
+=======
+      // Real Backend API call
+      // We pass the raw File object if we have it, otherwise null
+      const response = await sendChatToBackend(content, imageFile);
+>>>>>>> b471a44 (connected backend with frontend)
 
       addMessage({
         sender: 'assistant',
@@ -113,11 +124,19 @@ export function ChatLayout() {
         products: response.products // Pass products to store
       });
     } catch (error) {
+<<<<<<< HEAD
       console.error("Chat Error", error);
       addMessage({
         sender: 'assistant',
         type: 'text',
         content: 'Sorry, I encountered an error connecting to the server. Please ensure the backend is running.',
+=======
+      console.error(error);
+      addMessage({
+        sender: 'assistant',
+        type: 'text',
+        content: `Error: ${error instanceof Error ? error.message : 'Something went wrong connecting to ContextIQ.'}`,
+>>>>>>> b471a44 (connected backend with frontend)
       });
     } finally {
       setIsLoading(false);

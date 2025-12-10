@@ -5,7 +5,7 @@ import { Upload, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ImageUploaderProps {
-  onImageSelect: (imageUrl: string | null) => void;
+  onImageSelect: (url: string | null, file?: File | null) => void;
   selectedImage: string | null;
   compact?: boolean;
   triggerOnly?: boolean;
@@ -25,11 +25,8 @@ export function ImageUploader({ onImageSelect, selectedImage, compact, triggerOn
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      onImageSelect(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    const url = URL.createObjectURL(file);
+    onImageSelect(url, file);
   }, [onImageSelect]);
 
   const { getRootProps, getInputProps } = useDropzone({

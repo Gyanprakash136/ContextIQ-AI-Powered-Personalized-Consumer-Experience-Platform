@@ -46,7 +46,7 @@ async def verify_firebase_token(res: HTTPAuthorizationCredentials = Security(sec
         decoded_token = auth.verify_id_token(token)
         return decoded_token
     except Exception as e:
-        print(f"❌ Auth Error: {e}")
+        print(f"Auth Error: {e}")
         raise HTTPException(
             status_code=401,
             detail=f"Invalid Authentication Token: {str(e)}"

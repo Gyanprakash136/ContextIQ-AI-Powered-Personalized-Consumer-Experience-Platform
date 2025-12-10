@@ -11,13 +11,14 @@ import {
 } from '@/components/ui/popover';
 
 interface ChatInputProps {
-  onSend: (message: string, imageUrl?: string) => void;
+  onSend: (message: string, imageUrl?: string, imageFile?: File | null) => void;
   disabled?: boolean;
 }
 
 export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isFocused, setIsFocused] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -25,9 +26,10 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const handleSubmit = () => {
     if (!message.trim() && !selectedImage) return;
 
-    onSend(message.trim(), selectedImage || undefined);
+    onSend(message.trim(), selectedImage || undefined, selectedFile);
     setMessage('');
     setSelectedImage(null);
+    setSelectedFile(null);
 
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -56,8 +58,9 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   // Wrapper for image selection to close menu
-  const handleImageSelect = (fileUrl: string | null) => {
+  const handleImageSelect = (fileUrl: string | null, file?: File | null) => {
     setSelectedImage(fileUrl);
+    setSelectedFile(file || null);
     setIsMenuOpen(false);
   };
 
