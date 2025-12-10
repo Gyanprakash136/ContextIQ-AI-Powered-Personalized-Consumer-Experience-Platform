@@ -21,6 +21,15 @@ Date: 2025-12-10
 - **Solution**: Updated `main.py` to automatically detect URLs in the `message` field using Regex.
     - If a link is found (e.g., "Check this https://..."), the backend automatically scrapes it and feeds the content to the agent.
 
+### D. Firebase Authentication
+- **Goal**: Secure specific endpoints and manage user identity.
+- **Solution**: Implemented `verify_firebase_token` dependency.
+- **Status**: `/agent/chat` is now PROTECTED. Requires `Authorization: Bearer <token>`.
+
+### E. CORS Configuration
+- **Goal**: Allow frontend (React/Vite) to communicate with backend.
+- **Solution**: Added `CORSMiddleware` allowing `localhost:3000`, `5173`, and others.
+
 ## 2. Bug Fixes & Stability
 
 ### A. "ModuleNotFoundError: No module named 'PIL'"

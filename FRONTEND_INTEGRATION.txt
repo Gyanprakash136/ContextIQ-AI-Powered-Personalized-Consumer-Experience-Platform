@@ -8,36 +8,32 @@ ContextIQ: Frontend Integration Guide & API Documentation
 ContextIQ is an Agentic RAG system that provides "Context-Aware Shopping Assistance". 
 Unlike a standard chatbot, it can:
 - "See" images uploaded by the user.
-- "Read" external links (YouTube, Blogs) provided by the user.
+- "Search" the live web if products are missing from the catalog.
+- "Read" external links (YouTube, Blogs) automatically detected in chat.
 - "Predict" future needs based on purchase intent.
 
 2. ARCHITECTURE & PIPELINE
 --------------------------
-Understanding how the backend works will help you display the "Thinking" state.
-
 [Frontend] --> [API Gateway (FastAPI)] 
                      |
                      v
              [Agent Orchestrator (Gemini 2.5 Pro)]
                      |
-        ------------------------------------------
-        |                  |                     |
-   [Vision Tool]     [Scraper Tool]       [Vector DB]
-   (Sees Images)     (Reads Links)      (Finds Products)
-        |                  |                     |
-        ------------------------------------------
+        --------------------------------------------------------
+        |              |                  |                    |
+   [Vision Tool]  [Web Search]      [Scraper Tool]       [Vector DB]
+   (Sees Images)  (Finds URLs)      (Reads Pages)      (Finds Products)
+        |              |                  |                    |
+        --------------------------------------------------------
                      |
                      v
              [Predictive Engine]
         (Generates "Future Insights")
-                     |
-                     v
-            [Final Response JSON]
 
 3. CONNECTION DETAILS
 ---------------------
-Base URL: http://localhost:8002
-(Note: Port may vary if 8002 is busy, check backend console logs)
+Base URL: http://localhost:8000
+(Note: Check console for exact port, usually 8000 by default)
 
 4. API ENDPOINTS
 ----------------
@@ -57,39 +53,44 @@ B. Chat Agent (The "Main" Endpoint)
    
    - URL: /agent/chat
    - Method: POST
+   - Method: POST
    - Content-Type: multipart/form-data
+   - Headers:
+     - Authorization: Bearer <FIREBASE_ID_TOKEN> (Required)
    
    - Request Parameters (Form Fields):
-     1. user_id (Required, String): 
-        - A unique ID for the user (e.g., "user_123" or a UUID). 
-        - The backend uses this to maintain session history.
+     1. user_id (Optional, String): 
+        - The backend now prefers the UID from the Firebase Token.
+        - You can omit this if you are using Auth.
         
      2. message (Optional, String): 
         - The user's text query.
-        - Example: "I need a gaming laptop."
+        - **NEW**: You can include links directly here! 
+        - Example: "I want a drone" OR "Check this https://drones.com/x1"
+        - The backend *automatically* scrapes any URL found in the text.
         
-     3. context_link (Optional, String): 
-        - A URL the user wants the agent to analyze.
-        - Example: "https://youtube.com/watch?v=..."
-        
-     4. image (Optional, File): 
+     3. image (Optional, File): 
         - An image file (JPG/PNG) uploaded by the user.
         - Use this for "Visual Search" features.
+        - **Note**: If no image is selected, it's safe to send an empty string or omit the field.
+
+     4. context_link (Deprecated/Optional): 
+        - No longer needed. Just put links in the `message` field.
 
    - Example Request (JavaScript/Fetch):
      const formData = new FormData();
      formData.append("user_id", "session_v1");
-     formData.append("message", "Does this look good?");
-     formData.append("image", fileInput.files[0]); // Optional
+     formData.append("message", "Does this look good? https://example.com");
+     // formData.append("image", fileInput.files[0]); // Optional
      
-     await fetch("http://localhost:8002/agent/chat", {
+     await fetch("http://localhost:8000/agent/chat", {
        method: "POST",
        body: formData
      });
 
    - Response Format (JSON):
      {
-       "agent_response": "Based on the image, that is a Keychron Q1. We have it in stock!",
+       "agent_response": "I checked the link. That drone is $99 on Amazon. However, based on our catalog...",
        "session_id": "session_v1"
      }
 
@@ -97,20 +98,30 @@ B. Chat Agent (The "Main" Endpoint)
 ---------------------------
 To make the demo "Winning" level, consider these UI elements:
 
-1. "Analyzing Link" Spinner:
-   - If the user provides a `context_link`, show a spinner saying "Agent is reading the website..." while waiting for the response.
+1. "Searching the Web" Indicator:
+   - If the agent response says "I found this online" or "Checking the web", show a small "Globe" icon.
 
-2. "Vision" Badge:
-   - If the user uploads an image, show a small "Eyes" icon indicating the AI is "looking" at the photo.
+2. "Analyzing Link" Spinner:
+   - If the user types a URL, show a "Reading Link..." status briefly after sending.
 
-3. "Predictive Insight" Highlight:
-   - The agent will often end its response with a "Future Insight". 
-   - Try to parse this or highlight it in a different color (e.g., "💡 Pro Tip: Since you are buying X, you might need Y").
+3. "Vision" Badge:
+   - If the user uploads an image, show a small "Eyes" icon execution.
+
+4. "Predictive Insight" Highlight:
+   - The agent determines future needs. Highlight these tips in the UI (e.g., "💡 Recommendation: Buy batteries too").
 
 6. ERROR HANDLING
 -----------------
-- 400 Bad Request: Missing `user_id` or no input provided.
-- 500 Internal Error: Backend crash (usually API Key issue or model overload).
-  - Action: Display "Brain Freeze! Please try again." to the user.
+- 401 Unauthorized: Invalid or missing Firebase Token.
+- 422 Unprocessable Content: Usually means you sent JSON instead of Form Data. Use `FormData` object!
+- 500 Internal Error: Backend crash. Retry once, then show error.
+
+7. QUICK INTEGRATION CHECKLIST
+------------------------------
+[ ] Install Firebase SDK on Frontend.
+[ ] On Login, get ID Token: `user.getIdToken()`.
+[ ] Send POST to `http://localhost:8000/agent/chat`.
+[ ] Header: `Authorization: Bearer <token>`.
+[ ] Body: `FormData` with `message`.
 
 ================================================================================

@@ -1,5 +1,6 @@
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
+from core.auth import verify_firebase_token
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -14,7 +15,26 @@ import io
 import re
 from tools.scraper import scrape_url
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="ContextIQ Backend")
+
+# CORS Configuration
+# Production Note: In real prod, replace ["*"] with specific domains e.g., ["https://myapp.com"]
+origins = [
+    "http://localhost:3000",  # React/Next.js default
+    "http://localhost:5173",  # Vite default
+    "http://localhost:8000",  # Self
+    "*"                       # Allow all for hackathon flexibility
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow GET, POST, OPTIONS, etc.
+    allow_headers=["*"],  # Allow Authorization, Content-Type, etc.
+)
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -54,17 +74,38 @@ def save_history(user_id: str, history):
     with open(path, "wb") as f:
         pickle.dump(history, f)
 
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
+from core.auth import verify_firebase_token
+import shutil
+
+# ... existing imports ...
+
+# ... existing code ...
+
 @app.post("/agent/chat")
 async def chat_endpoint(
-    user_id: str = Form(...),
+    # Auth Dependency: Validates header "Authorization: Bearer <token>"
+    token_data: dict = Depends(verify_firebase_token),
+    # user_id form field is now OPTIONAL or ignored in favor of token
+    user_id: Optional[str] = Form(None), 
     message: str = Form(None),
     context_link: str = Form(None),
     image: Union[UploadFile, str, None] = File(None)
 ):
     """
-    Main Chat Endpoint supporting Text + Link + Image
+    Main Chat Endpoint (PROTECTED)
     """
-    history = load_history(user_id)
+    # Use UID from token as the source of truth
+    current_user_id = token_data.get("uid")
+    
+    # Fallback to form user_id ONLY if allowed (mock mode) or for migration
+    # ideally we force token uid
+    if not current_user_id and user_id:
+        current_user_id = user_id
+    
+    # Use current_user_id for logic
+    history = load_history(current_user_id)
+
     
     # Construct input parts
     input_parts = []
@@ -124,7 +165,7 @@ async def chat_endpoint(
         response = agent.run(input=input_parts, chat_history=history)
         
         # Save updated history
-        save_history(user_id, response.chat_history)
+        save_history(current_user_id, response.chat_history)
         
         # Check if we have structured output or just text
         # For this hackathon MVP, we return the text and maybe parse it if needed
@@ -134,7 +175,7 @@ async def chat_endpoint(
         
         return {
             "agent_response": response.output,
-            "session_id": user_id,
+            "session_id": current_user_id,
             # In a full implementation, we would extract specific product data here
             # "products": [], 
             # "predictive_insight": ...
