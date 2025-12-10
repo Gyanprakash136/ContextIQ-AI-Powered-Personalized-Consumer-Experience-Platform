@@ -24,6 +24,7 @@ app = FastAPI(title="ContextIQ Backend")
 origins = [
     "http://localhost:3000",  # React/Next.js default
     "http://localhost:5173",  # Vite default
+    "http://localhost:8080",  # User specified frontend port
     "http://localhost:8000",  # Self
     "*"                       # Allow all for hackathon flexibility
 ]
