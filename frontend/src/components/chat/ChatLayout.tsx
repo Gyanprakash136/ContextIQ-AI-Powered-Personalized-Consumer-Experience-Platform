@@ -4,16 +4,8 @@ import { ChatSidebar } from './ChatSidebar';
 import { ChatInput } from './ChatInput';
 import { MessageBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
-<<<<<<< HEAD
 import { sendMessageToBackend } from '@/api/realApi';
-=======
-import { sendChatToBackend } from '@/api/api';
-<<<<<<< HEAD
->>>>>>> b471a44 (connected backend with frontend)
-import { MessageSquare, Sparkles, LogOut, Home, User } from 'lucide-react';
-=======
 import { MessageSquare, Sparkles, LogOut, Home, User, PanelLeftOpen } from 'lucide-react';
->>>>>>> 1a8c430 (changes in frontend)
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import {
@@ -110,42 +102,34 @@ export function ChatLayout() {
     }
 
     try {
-<<<<<<< HEAD
       // Real API Call
       // Convert base64 imageUrl to File if present (simplified for now, assumes base64)
-      let imageFile: File | undefined;
-      if (imageUrl) {
-        const res = await fetch(imageUrl);
-        const blob = await res.blob();
-        imageFile = new File([blob], "upload.jpg", { type: blob.type });
+      let imageFileToSend: File | undefined = imageFile || undefined;
+      if (imageUrl && !imageFile) {
+        try {
+          const res = await fetch(imageUrl);
+          const blob = await res.blob();
+          imageFileToSend = new File([blob], "upload.jpg", { type: blob.type });
+        } catch (e) {
+          console.error("Failed to convert image URL to File", e);
+        }
       }
 
-      const response = await sendMessageToBackend(content, imageFile, undefined, user?.id, currentSessionId || undefined);
-=======
-      // Real Backend API call
-      // We pass the raw File object if we have it, otherwise null
-      const { agent_response, products } = await sendChatToBackend(content, imageFile);
+      const response = await sendMessageToBackend(content, imageFileToSend, undefined, user?.id, currentSessionId || undefined);
 
       addMessage({
         sender: 'assistant',
         type: 'text',
-        content: agent_response,
-        products: products
+        content: response.agent_response,
+        products: response.products
       });
+
     } catch (error) {
-<<<<<<< HEAD
       console.error("Chat Error", error);
       addMessage({
         sender: 'assistant',
         type: 'text',
         content: 'Sorry, I encountered an error connecting to the server. Please ensure the backend is running.',
-=======
-      console.error(error);
-      addMessage({
-        sender: 'assistant',
-        type: 'text',
-        content: `Error: ${error instanceof Error ? error.message : 'Something went wrong connecting to ContextIQ.'}`,
->>>>>>> b471a44 (connected backend with frontend)
       });
     } finally {
       setIsLoading(false);
