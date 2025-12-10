@@ -8,5 +8,4 @@ sessions/
 .DS_Store
 frontend/.env
 serviceAccountKey.json
-serviceAccountKey.json
-serviceAccountKey.json
+.env
