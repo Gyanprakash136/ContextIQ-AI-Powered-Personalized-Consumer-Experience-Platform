@@ -30,6 +30,16 @@ Date: 2025-12-10
 - **Goal**: Allow frontend (React/Vite) to communicate with backend.
 - **Solution**: Added `CORSMiddleware` allowing `localhost:3000`, `5173`, and others.
 
+- **Goal**: Allow frontend (React/Vite) to communicate with backend.
+- **Solution**: Added `CORSMiddleware` allowing `localhost:3000`, `5173`, and others.
+
+### F. Structured Product Recommendations (Winning Strategy)
+- **Goal**: Return Rich Product Cards instead of text.
+- **Solution**: 
+    - Forced Agent to output **strict JSON**.
+    - Optimized Search to target **Amazon.in / Flipkart**.
+    - Frontend receives `{ "products": [{ "name": "...", "price": "...", "link": "..." }] }`.
+
 ## 2. Bug Fixes & Stability
 
 ### A. "ModuleNotFoundError: No module named 'PIL'"

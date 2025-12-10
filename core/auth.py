@@ -38,7 +38,8 @@ async def verify_firebase_token(res: HTTPAuthorizationCredentials = Security(sec
     token = res.credentials
     
     # Check for Mock Mode (Useful for testing without keys)
-    if os.getenv("MOCK_AUTH") == "true":
+    # ALSO allow explicit "mock_token" for dev testing
+    if os.getenv("MOCK_AUTH") == "true" or token == "mock_token":
         return {"uid": "mock_user_123", "email": "mock@example.com"}
 
     try:

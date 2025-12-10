@@ -1,28 +1,32 @@
 from ddgs import DDGS
 
-def search_web(query: str):
+def search_web(query: str, max_results: int = 5) -> str:
     """
-    Use this tool to search the internet for products, reviews, or general information.
-    Use this when a product is NOT found in the internal catalog.
+    Searches the web using DuckDuckGo.
+    Optimizes query for Shopping if intent is detected.
+    """
+    print(f"🔎 Searching web for: {query}")
     
-    Args:
-        query: The search query (e.g., "best 4k drones 2025 review").
-    """
+    # Shopping Optimization: Force search on Marketplaces if query implies buying
+    buy_keywords = ["buy", "price", "shop", "cost", "cheap", "best", "shoe", "laptop", "phone"]
+    if any(k in query.lower() for k in buy_keywords):
+        # Append site filters for Indian Context
+        # We explicitly look for product pages on major e-commerce sites
+        query += " (site:amazon.in OR site:flipkart.com OR site:myntra.com OR site:ajio.com)"
+    
+    results = []
     try:
-        print(f"🔎 Searching web for: {query}")
-        results = list(DDGS().text(query, max_results=5))
-        
-        if not results:
-            return "No results found on the web."
-            
-        formatted_results = []
-        for i, res in enumerate(results):
-            title = res.get('title', 'No Title')
-            link = res.get('href', 'No Link')
-            body = res.get('body', '')
-            formatted_results.append(f"Result {i+1}:\nTitle: {title}\nLink: {link}\nSnippet: {body}\n")
-            
-        return "\n---\n".join(formatted_results)
-        
+        with DDGS() as ddgs:
+            # We use 'text' search (formerly 'news' or others)
+            # region='in-en' optimizes for India (English)
+            # Limit to 3 results for performance
+            ddgs_gen = ddgs.text(query, region="in-en", max_results=3)
+            for r in ddgs_gen:
+                results.append(f"Title: {r['title']}\nLink: {r['href']}\nSnippet: {r['body']}\n")
     except Exception as e:
-        return f"Error searching web: {str(e)}"
+        return f"Error searching web: {e}"
+
+    if not results:
+        return "No results found."
+    
+    return "\n---\n".join(results)

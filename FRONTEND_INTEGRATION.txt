@@ -90,15 +90,29 @@ B. Chat Agent (The "Main" Endpoint)
 
    - Response Format (JSON):
      {
-       "agent_response": "I checked the link. That drone is $99 on Amazon. However, based on our catalog...",
-       "session_id": "session_v1"
+       "agent_response": "I found these top 3 options for you...",
+       "session_id": "session_v1",
+       "products": [
+         {
+           "name": "Nike Air Max Impact 4",
+           "price": "₹4,995",
+           "marketplace": "Amazon",
+           "link": "https://amazon.in/...",
+           "image": "https://...",
+           "reason": "Great cushioning for basketball"
+         }
+       ]
      }
 
 5. UI FEATURES TO IMPLEMENT
 ---------------------------
 To make the demo "Winning" level, consider these UI elements:
 
-1. "Searching the Web" Indicator:
+1. "Product Cards" (CRITICAL):
+   - If `products` array is present in the response, render a horizontal scroll/grid of cards below the chat message.
+   - Each card should show: Image, Name, Price, and a "Buy Now" button opening the link.
+
+2. "Searching the Web" Indicator:
    - If the agent response says "I found this online" or "Checking the web", show a small "Globe" icon.
 
 2. "Analyzing Link" Spinner:

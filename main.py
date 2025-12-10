@@ -168,19 +168,32 @@ async def chat_endpoint(
         # Save updated history
         save_history(current_user_id, response.chat_history)
         
-        # Check if we have structured output or just text
-        # For this hackathon MVP, we return the text and maybe parse it if needed
-        # The TDD asks for specific JSON fields (agent_response, products, etc.)
-        # We can ask the agent to return JSON or parse the text.
-        # For now, we return the raw text, but wrapped in the requested format.
+        # Parse Structured JSON Output
+        import json
+        raw_output = response.output
         
-        return {
-            "agent_response": response.output,
+        # Default fallback
+        final_response = {
+            "agent_response": raw_output,
             "session_id": current_user_id,
-            # In a full implementation, we would extract specific product data here
-            # "products": [], 
-            # "predictive_insight": ...
+            "products": []
         }
+
+        try:
+            # Clean potential markdown wrapping ```json ... ```
+            clean_json = raw_output.replace("```json", "").replace("```", "").strip()
+            parsed_data = json.loads(clean_json)
+            
+            # If successful, merge into final response
+            if isinstance(parsed_data, dict):
+                final_response["agent_response"] = parsed_data.get("agent_response", raw_output)
+                final_response["products"] = parsed_data.get("products", [])
+                
+        except json.JSONDecodeError:
+            print("⚠️ Agent returned non-JSON text. Falling back to raw output.")
+            pass
+        
+        return final_response
         
     except Exception as e:
         print(f"Error: {e}")
