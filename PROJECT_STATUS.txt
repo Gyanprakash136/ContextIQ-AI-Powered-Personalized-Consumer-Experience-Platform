@@ -1,0 +1,105 @@
+# PROJECT STATUS REPORT
+Date: 2025-12-10
+
+## 1. Features Implemented
+
+### A. Web Search Failover (Agentic Search)
+- **Goal**: Allow the agent to find products not present in the local database.
+- **Solution**: Integrated `DuckDuckGo` search (via `ddgs` library).
+- **Workflow**: 
+    1. Agent searches internal `CatalogDB`.
+    2. If not found, Agent uses `WebSearch` tool to find live results.
+
+### B. Accurate Pricing via Scraping
+- **Goal**: Ensure the agent provides real prices, not hallucinations.
+- **Solution**: Updated Agent Prompts to chain tools:
+    - `WebSearch` -> Finds product URLs.
+    - `SmartScraper` -> **Visits** those URLs to extract specific Price/Rating text.
+
+### C. Automatic Link Extraction
+- **Goal**: Simplify user input (no need for separate `context_link` field).
+- **Solution**: Updated `main.py` to automatically detect URLs in the `message` field using Regex.
+    - If a link is found (e.g., "Check this https://..."), the backend automatically scrapes it and feeds the content to the agent.
+
+## 2. Bug Fixes & Stability
+
+### A. "ModuleNotFoundError: No module named 'PIL'"
+- **Issue**: `Pillow` library was listed in requirements but not installed/found.
+- **Fix**: Installed `pillow` in the environment.
+
+### B. API "422 Unprocessable Content" Errors
+- **Issue**: The API client was sending the `image` field as an empty string `""` when no image was uploaded, but the server expected a binary `UploadFile` object.
+- **Fix**: Updated `main.py` to accept `Union[UploadFile, str, None]` and safely ignore string inputs for the image field.
+
+### C. "Stream consumed" Server Error
+- **Issue**: The custom exception handler tried to read the request body twice (once for logging, once for processing), causing a crash.
+- **Fix**: Added error handling to verify if the stream was already consumed before trying to read it for logs.
+
+## 3. End-to-End Workflow & Edge Case Handling
+
+This section details exactly how a user request travels through the system and how we handle various edge cases.
+
+### Step 1: User Request (The API Call)
+**Endpoint**: `POST /agent/chat`
+**Format**: `multipart/form-data` (Supports Text + File)
+
+**Cases & Handling**:
+1.  **Standard Text**: User sends `message="I want a drone"`.
+    *   System passes text directly to Agent.
+2.  **Text + Link**: User sends `message="Is this good? https://drones.com/x1"`.
+    *   **Logic**: Regex detects `https://...`.
+    *   **Action**: Backend calls `scrape_url("https://drones.com/x1")` *before* the agent starts.
+    *   **Result**: Agent receives: "User Message: Is this good? [SCRAPED CONTENT OF PAGE...]".
+3.  **Image Upload**: User attaches `image.jpg`.
+    *   **Logic**: Pillow loads the image.
+    *   **Edge Case**: User sends `image=""` (empty string) instead of null.
+    *   **Handling**: Logic checks `isinstance(image, str)` and ignores it, preventing a crash.
+4.  **Bad Request Format**: User sends JSON instead of Form Data.
+    *   **Handling**: `validation_exception_handler` catches the 422 error and logs the exact body for debugging.
+
+### Step 2: The Agent Brain (Processing)
+The Agent (Gemini 2.5) receives the inputs (Text + Scraped Content + Image).
+
+**Decision Tree / Workflow**:
+
+*   **Scenario A: "I want to buy X" (Checking Inventory)**
+    1.  Agent calls `CatalogSearch("X")`.
+    2.  **Case Found**: Returns internal product details.
+    3.  **Case Not Found**: Agent realizes it's missing.
+        *   **Failover**: Agent calls `WebSearch("X")`.
+        *   **Refinement**: Agent sees search results have links (e.g., `amazon.com/x`).
+        *   **Verification**: Agent calls `SmartScraper("amazon.com/x")` to get *exact price*.
+        *   **Output**: "We don't have X in stock, but I found it online for $99. Ratings are 4.5/5."
+
+*   **Scenario B: "Analyze this link/image"**
+    1.  Agent sees the image or scraped content provided in Step 1.
+    2.  Agent analyzes features (e.g., "It's a red gaming mouse").
+    3.  Agent calls `CatalogSearch("Red gaming mouse")` to find similar internal items.
+
+*   **Scenario C: Future Prediction**
+    1.  After finding a product (e.g., Flashlight), Agent calls `Predictor()`.
+    2.  **Output**: "Since you're buying a flashlight, you might need AA batteries in 3 months."
+
+### Step 3: Response & Persistence
+1.  **Chat History**: The conversation ( User Input + Agent Response) is saved to `sessions/{user_id}.pkl`.
+2.  **API Response**: Returns JSON `{ "agent_response": "...", "session_id": "..." }`.
+    *   **Edge Case**: Agent returns Error text.
+    *   **Handling**: Returns 200 OK with error description in the payload (to keep frontend stable), logs error on backend.
+
+## 4. Manual API Testing Report
+**Date**: 2025-12-10
+**Tools Used**: `curl`
+**Context**: Validating all endpoints and edge cases.
+
+| Test Case | Method | Input Data | Expected Result | Actual Result | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Health Check** | `GET /health` | None | `200 OK` | `200 OK` | ✅ PASS |
+| **Standard Chat** | `POST /chat` | `user_id`, `message` | `200 OK`, Agent Reply | `200 OK` | ✅ PASS |
+| **Auto-Scraping** | `POST /chat` | `message` with URL | Scraped content in context | Scraped & Processed | ✅ PASS |
+| **Image Upload** | `POST /chat` | `image` file | Image processed | Image received | ✅ PASS |
+| **Empty Image** | `POST /chat` | `image=""` (string) | Ignore string, no error | Ignored safely | ✅ PASS |
+| **Missing User ID** | `POST /chat` | `message` only | `422 Unprocessable Content` | `422 Unprocessable` | ✅ PASS |
+
+## 5. Current Agent Capabilities Summary
+- **Multimedia Support**: Text, Links (auto-scraped), and Images (via Pillow).
+- **Tools**: `CatalogSearch` (Internal), `WebSearch` (External), `SmartScraper` (Content), `Predictor` (Insights).
