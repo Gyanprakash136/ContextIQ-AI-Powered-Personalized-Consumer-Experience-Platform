@@ -4,6 +4,7 @@ import { Message } from '@/stores/sessionStore';
 import { Lightbox } from './Lightbox';
 import { format } from 'date-fns';
 import { Eye, Lightbulb } from 'lucide-react';
+import { ProductCard } from './ProductCard';
 
 interface MessageBubbleProps {
   message: Message;
@@ -87,6 +88,17 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 {insight}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Product Recommendations */}
+        {message.products && message.products.length > 0 && (
+          <div className="mt-4 flex overflow-x-auto pb-4 gap-2 snap-x custom-scrollbar">
+            {message.products.map((product, idx) => (
+              <div key={idx} className="snap-center shrink-0 w-64">
+                <ProductCard product={product} />
+              </div>
+            ))}
           </div>
         )}
 

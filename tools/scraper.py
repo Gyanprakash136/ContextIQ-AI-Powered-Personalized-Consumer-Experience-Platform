@@ -29,9 +29,28 @@ def scrape_url(url: str):
         soup = BeautifulSoup(response.content, 'html.parser')
         
         # Remove script and style elements
-        for script in soup(["script", "style"]):
+        for script in soup(["script", "style", "nav", "footer"]):
             script.decompose()
-            
+
+        # Transform <a> tags to explicit text: "Link Text [URL: href]"
+        # This allows the LLM to see which text corresponds to which link
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            text = a.get_text(strip=True)
+            if text and href and len(text) > 3: # Skip empty/tiny links
+                if href.startswith('/'):
+                     # Resolve relative URL using the base URL from the response (handling redirects)
+                     from urllib.parse import urljoin
+                     href = urljoin(response.url, href)
+
+                # Check if it's a product link pattern (optional helpful heuristic)
+                if "/dp/" in href or "/p/" in href or "product" in href or "pd" in href:
+                    new_string = f" {text} [LINK: {href}] "
+                else:
+                    new_string = f" {text} "
+                
+                a.replace_with(new_string)
+
         text = soup.get_text()
         
         # Clean up whitespace
@@ -46,9 +65,12 @@ def scrape_url(url: str):
             except IndexError:
                 pass
 
+        if len(clean_text) < 500:
+            return f"Error: Site blocked or empty content (Length: {len(clean_text)}). Please try a different source."
+
         # Limit length to avoid context window issues
-        # Increased to 25k to capture product grids on Amazon
-        return clean_text[:25000] + ("..." if len(clean_text) > 25000 else "")
+        # Reduced to 15k to avoid overwhelming the model
+        return clean_text[:15000] + ("..." if len(clean_text) > 15000 else "")
         
     except Exception as e:
         return f"Error scraping URL: {str(e)}"

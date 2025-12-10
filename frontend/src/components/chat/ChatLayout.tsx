@@ -4,7 +4,7 @@ import { ChatSidebar } from './ChatSidebar';
 import { ChatInput } from './ChatInput';
 import { MessageBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
-import { mockChatResponse } from '@/api/mockApi';
+import { sendMessageToBackend } from '@/api/realApi';
 import { MessageSquare, Sparkles, LogOut, Home, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -95,19 +95,29 @@ export function ChatLayout() {
     setIsAnalyzingLink(hasLink);
 
     try {
-      // Mock API call
-      const response = await mockChatResponse(content, imageUrl);
+      // Real API Call
+      // Convert base64 imageUrl to File if present (simplified for now, assumes base64)
+      let imageFile: File | undefined;
+      if (imageUrl) {
+        const res = await fetch(imageUrl);
+        const blob = await res.blob();
+        imageFile = new File([blob], "upload.jpg", { type: blob.type });
+      }
+
+      const response = await sendMessageToBackend(content, imageFile, undefined, user?.id, currentSessionId || undefined);
 
       addMessage({
         sender: 'assistant',
         type: 'text',
-        content: response,
+        content: response.agent_response,
+        products: response.products // Pass products to store
       });
     } catch (error) {
+      console.error("Chat Error", error);
       addMessage({
         sender: 'assistant',
         type: 'text',
-        content: 'Sorry, something went wrong. Please try again.',
+        content: 'Sorry, I encountered an error connecting to the server. Please ensure the backend is running.',
       });
     } finally {
       setIsLoading(false);

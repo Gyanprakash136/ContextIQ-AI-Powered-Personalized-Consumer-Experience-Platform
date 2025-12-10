@@ -58,37 +58,13 @@ os.makedirs("sessions", exist_ok=True)
 # Initialize Agent
 agent = build_contextiq_agent()
 
-def load_history(user_id: str):
-    """Load chat history from local file storage."""
-    path = f"sessions/{user_id}.pkl"
-    if os.path.exists(path):
-        try:
-            with open(path, "rb") as f:
-                return pickle.load(f)
-        except Exception:
-            return []
-    return []
-
-def save_history(user_id: str, history):
-    """Save chat history to local file storage."""
-    path = f"sessions/{user_id}.pkl"
-    with open(path, "wb") as f:
-        pickle.dump(history, f)
-
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
-from core.auth import verify_firebase_token
-import shutil
-
-# ... existing imports ...
-
-# ... existing code ...
+from utils.session_manager import session_manager
 
 @app.post("/agent/chat")
 async def chat_endpoint(
-    # Auth Dependency: Validates header "Authorization: Bearer <token>"
     token_data: dict = Depends(verify_firebase_token),
-    # user_id form field is now OPTIONAL or ignored in favor of token
     user_id: Optional[str] = Form(None), 
+    session_id: Optional[str] = Form(None), # NEW: Accept session_id
     message: str = Form(None),
     context_link: str = Form(None),
     image: Union[UploadFile, str, None] = File(None)
@@ -99,15 +75,23 @@ async def chat_endpoint(
     # Use UID from token as the source of truth
     current_user_id = token_data.get("uid")
     
-    # Fallback to form user_id ONLY if allowed (mock mode) or for migration
-    # ideally we force token uid
     if not current_user_id and user_id:
         current_user_id = user_id
     
-    # Use current_user_id for logic
-    history = load_history(current_user_id)
-
+    # Session Management Logic
+    if not session_id or session_id == "undefined":
+        # Create a new session if none provided
+        session_id = session_manager.create_session(current_user_id)
+        
+    session_data = session_manager.load_session(session_id)
     
+    if not session_data:
+        # Create new session if invalid ID
+        session_id = session_manager.create_session(current_user_id, session_id)
+        session_data = session_manager.load_session(session_id)
+        
+    history = session_data["history"]
+
     # Construct input parts
     input_parts = []
     
@@ -116,7 +100,6 @@ async def chat_endpoint(
         text_prompt += f"User Message: {message}\n"
         
         # Automatic Link Extraction and Scraping
-        # Find all http/https links
         urls = re.findall(r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*', message)
         if urls:
             print(f"🔗 Detected URLs: {urls}")
@@ -132,7 +115,6 @@ async def chat_endpoint(
 
     # Deprecated: context_link (keeping for backward compatibility but optional)
     if context_link:
-        # If the user explicitly provided a link via the form field, scrape it too
         text_prompt += f"\n--- EXPLICIT CONTEXT LINK ---\nSource: {context_link}\n"
         try:
              scraped_content = scrape_url(context_link)
@@ -144,10 +126,8 @@ async def chat_endpoint(
         input_parts.append(text_prompt)
         
     if image:
-        # Check if it's actually an UploadFile (ignore strings)
         if isinstance(image, UploadFile):
             try:
-                # Read image into PIL
                 contents = await image.read()
                 img = Image.open(io.BytesIO(contents))
                 input_parts.append(img)
@@ -155,7 +135,6 @@ async def chat_endpoint(
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid image file: {e}")
         elif isinstance(image, str):
-            # If it's a string, likely empty or invalid upload, just ignore or log
             print(f"⚠️ Received string for image field, ignoring: {image}")
     
     if not input_parts:
@@ -166,39 +145,99 @@ async def chat_endpoint(
         response = agent.run(input=input_parts, chat_history=history)
         
         # Save updated history
-        save_history(current_user_id, response.chat_history)
+        session_manager.save_session(session_id, response.chat_history)
         
         # Parse Structured JSON Output
-        import json
+        # import json # Already imported at top-level ideally, but local import is fine if kept
         raw_output = response.output
         
-        # Default fallback
         final_response = {
             "agent_response": raw_output,
-            "session_id": current_user_id,
+            "session_id": session_id,
             "products": []
         }
 
         try:
-            # Clean potential markdown wrapping ```json ... ```
+            # Try to clean markdown code blocks first
             clean_json = raw_output.replace("```json", "").replace("```", "").strip()
             parsed_data = json.loads(clean_json)
-            
-            # If successful, merge into final response
-            if isinstance(parsed_data, dict):
-                final_response["agent_response"] = parsed_data.get("agent_response", raw_output)
-                final_response["products"] = parsed_data.get("products", [])
-                final_response["predictive_insight"] = parsed_data.get("predictive_insight", None)
-                
         except json.JSONDecodeError:
-            print("⚠️ Agent returned non-JSON text. Falling back to raw output.")
-            pass
+            # Fallback: Try to find start and end of JSON using Regex
+            try:
+                # import re # Removed to avoid UnboundLocalError
+                match = re.search(r'\{.*\}', raw_output, re.DOTALL)
+                if match:
+                   json_str = match.group(0)
+                   parsed_data = json.loads(json_str)
+                else:
+                   raise ValueError("No JSON found")
+            except Exception:
+                # If all parsing fails, keep the raw output as the message
+                parsed_data = None
+
+        if isinstance(parsed_data, dict):
+            final_response["agent_response"] = parsed_data.get("agent_response", raw_output)
+            final_response["products"] = parsed_data.get("products", [])
+            final_response["predictive_insight"] = parsed_data.get("predictive_insight", None)
+            final_response["session_id"] = parsed_data.get("session_id", session_id) # Trust model if it returns session_id? No, sticky to verified.
+            
+            # Ensure products is a list
+            if not isinstance(final_response["products"], list):
+                 final_response["products"] = []
         
         return final_response
         
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"❌ Critical Endpoint Error: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/agent/history")
+async def get_history(token_data: dict = Depends(verify_firebase_token)):
+    user_id = token_data.get("uid")
+    return session_manager.list_user_sessions(user_id)
+
+@app.get("/agent/session/{session_id}")
+async def get_session_details(session_id: str, token_data: dict = Depends(verify_firebase_token)):
+    """Fetch messages for a specific session."""
+    user_id = token_data.get("uid")
+    data = session_manager.load_session(session_id)
+    
+    if not data or data.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    messages = []
+    for msg in data["history"]:
+        role = "user" if msg.role == "user" else "assistant"
+        content = msg.parts[0].text if msg.parts else ""
+        messages.append({"role": role, "content": content})
+        
+    return {"title": data.get("title"), "messages": messages}
+
+class TitleRequest(BaseModel):
+    session_id: str
+
+@app.post("/agent/title")
+async def generate_title(req: TitleRequest, token_data: dict = Depends(verify_firebase_token)):
+    """Generate a title for the session based on context."""
+    user_id = token_data.get("uid")
+    data = session_manager.load_session(req.session_id)
+    
+    if not data or data.get("user_id") != user_id:
+         raise HTTPException(status_code=404, detail="Session not found")
+         
+    history = data["history"]
+    if not history:
+        return {"title": "New Chat"}
+        
+    first_msg = next((m for m in history if m.role == "user"), None)
+    if first_msg:
+        title = first_msg.parts[0].text[:40].strip() + "..."
+        session_manager.save_session(req.session_id, history, title=title)
+        return {"title": title}
+        
+    return {"title": "New Chat"}
 
 @app.get("/health")
 def health_check():

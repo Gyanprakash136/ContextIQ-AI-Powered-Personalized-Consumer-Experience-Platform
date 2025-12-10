@@ -8,6 +8,16 @@ export interface User {
   isGuest: boolean;
 }
 
+import { Product } from '../api/realApi';
+
+export interface ChatSession {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface Message {
   id: string;
   sender: 'user' | 'assistant';
@@ -15,6 +25,7 @@ export interface Message {
   content: string;
   imageUrl?: string;
   timestamp: Date;
+  products?: Product[];
 }
 
 export interface ChatSession {
