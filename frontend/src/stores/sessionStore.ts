@@ -112,6 +112,15 @@ export const useSessionStore = create<SessionState>()(
         },
 
         createSession: () => {
+          const { sessions } = get();
+
+          // If the most recent session is empty, reuse it to prevent piling up empty chats
+          const recentSession = sessions[0];
+          if (recentSession && recentSession.messages.length === 0) {
+            set({ currentSessionId: recentSession.id });
+            return recentSession.id;
+          }
+
           const newSession: ChatSession = {
             id: generateId(),
             title: 'New Chat',
@@ -168,8 +177,9 @@ export const useSessionStore = create<SessionState>()(
     {
       name: 'chat-session-storage',
       partialize: (state) => ({
-        // We generally don't persist 'user' in local storage if we want to rely on Firebase Auth state
-        // But for offline/optimistic UI, we can. Firebase SDK handles token persistence.
+        // Persist user and auth state to survive refreshes
+        user: state.user,
+        isAuthenticated: state.isAuthenticated,
         sessions: state.sessions,
         currentSessionId: state.currentSessionId,
       }),

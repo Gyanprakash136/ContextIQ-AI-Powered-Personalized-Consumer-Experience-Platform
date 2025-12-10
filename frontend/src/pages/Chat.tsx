@@ -5,13 +5,16 @@ import { useSessionStore } from '@/stores/sessionStore';
 
 const Chat = () => {
   const navigate = useNavigate();
-  const { isAuthenticated } = useSessionStore();
+  const { isAuthenticated, createSession } = useSessionStore();
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate('/auth');
+    } else {
+      // Force new session on entry
+      createSession();
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, navigate, createSession]);
 
   if (!isAuthenticated) {
     return null;

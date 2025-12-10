@@ -25,26 +25,26 @@ export default {
         sans: [
           "Google Sans",
           "Inter",
-          "system-ui",
-          "-apple-system",
-          "BlinkMacSystemFont",
-          "Segoe UI",
-          "Roboto",
-          "Helvetica Neue",
-          "Arial",
           "sans-serif",
         ],
+        display: ["Satoshi", "sans-serif"],
       },
       colors: {
+        "ink-black": "#050505",
+        "charcoal": "#0a0a0a",
+        "border-subtle": "rgba(255,255,255,0.08)",
+        "text-main": "#ededed",
+        "glass": "rgba(20, 20, 20, 0.6)",
+        primary: {
+          DEFAULT: "#ec1313",
+          foreground: "#ffffff",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
-        primary: {
-          DEFAULT: "hsl(var(--primary))",
-          foreground: "hsl(var(--primary-foreground))",
-        },
+
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
           foreground: "hsl(var(--secondary-foreground))",
@@ -104,6 +104,9 @@ export default {
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+      },
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
       },
     },
   },

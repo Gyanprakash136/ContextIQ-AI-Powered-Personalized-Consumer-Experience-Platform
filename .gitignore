@@ -7,3 +7,4 @@ chroma_data/
 sessions/
 .DS_Store
 frontend/.env
+serviceAccountKey.json

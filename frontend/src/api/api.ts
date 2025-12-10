@@ -86,18 +86,6 @@ export async function sendChatToBackend(
 
 // Deprecated Mock function replacement - redirects to real backend
 export async function mockChatResponse(message: string, imageUrl?: string): Promise<string> {
-    // We need to convert the imageUrl string back to a File object if possible, 
-    // but the backend expects a file.
-    // For now, if we only have a string URL (like from a previous session or partial implementation),
-    // we might skip the image or need to fetch it.
-    // HOWEVER, the UI components usually pass the plain string for preview.
-    // Ideally, we should update ChatLayout to pass the File object.
-
-    // For this immediate integration, we'll try to fetch the blob if it's a blob url, 
-    // or just send text if no file object is handy.
-
-    // NOTE: This shim is to make existing components valid without changing every single import immediately.
-    // But we should update ChatLayout.tsx to use sendChatToBackend directly.
     const res = await sendChatToBackend(message, null);
     return res.agent_response;
 }
