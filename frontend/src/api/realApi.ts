@@ -20,7 +20,7 @@ const BACKEND_URL = "http://127.0.0.1:8000";
 
 export async function sendMessageToBackend(
     message: string,
-    imageFile?: File, 
+    imageFile?: File,
     contextLink?: string,
     userId?: string,
     sessionId?: string
@@ -52,7 +52,7 @@ export async function sendMessageToBackend(
         const response = await fetch(`${BACKEND_URL}/agent/chat`, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${token}`, 
+                "Authorization": `Bearer ${token}`,
             },
             body: formData,
         });
@@ -67,5 +67,70 @@ export async function sendMessageToBackend(
     } catch (error) {
         console.error("Error sending message to backend:", error);
         throw error;
+    }
+}
+
+export async function fetchChatHistory(token: string): Promise<any[]> {
+    try {
+        const response = await fetch(`${BACKEND_URL}/agent/history`, {
+            headers: {
+                "Authorization": `Bearer ${token}`,
+            },
+        });
+        if (!response.ok) throw new Error("Failed to fetch history");
+        return await response.json();
+    } catch (error) {
+        console.error("Error fetching history:", error);
+        return [];
+    }
+}
+
+export async function fetchSessionDetails(sessionId: string, token: string): Promise<any> {
+    try {
+        const response = await fetch(`${BACKEND_URL}/agent/session/${sessionId}`, {
+            headers: {
+                "Authorization": `Bearer ${token}`,
+            },
+        });
+        if (!response.ok) throw new Error("Failed to fetch session details");
+        return await response.json();
+    } catch (error) {
+        console.error("Error fetching session details:", error);
+        return null;
+    }
+}
+
+export async function generateChatTitle(sessionId: string, token: string): Promise<string> {
+    try {
+        const response = await fetch(`${BACKEND_URL}/agent/title`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ session_id: sessionId }),
+        });
+        if (!response.ok) return "New Chat";
+        const data = await response.json();
+        return data.title || "New Chat";
+    } catch (error) {
+        console.error("Error generating title:", error);
+        return "New Chat";
+    }
+}
+
+
+export async function claimSession(sessionId: string, token: string): Promise<boolean> {
+    try {
+        const response = await fetch(`${BACKEND_URL}/agent/session/${sessionId}/claim`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+            },
+        });
+        return response.ok;
+    } catch (error) {
+        console.error("Error claiming session:", error);
+        return false;
     }
 }

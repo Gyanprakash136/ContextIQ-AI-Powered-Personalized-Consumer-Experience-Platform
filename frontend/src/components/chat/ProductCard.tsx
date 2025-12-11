@@ -10,9 +10,15 @@ export function ProductCard({ product }: ProductCardProps) {
     return (
         <div className="flex-none w-[280px] bg-[#1e1f20]/90 backdrop-blur-md rounded-2xl border border-white/10 overflow-hidden hover:border-primary/50 transition-all duration-300 group shadow-lg">
             <div className="relative h-40 w-full bg-white/5 overflow-hidden">
-                {product.image ? (
+                {product.image && product.image !== 'No Image' ? (
                     <img
                         src={product.image}
+                        alt={product.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    />
+                ) : product.link ? (
+                    <img
+                        src={`https://s0.wp.com/mshots/v1/${encodeURIComponent(product.link)}?w=400`}
                         alt={product.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     />

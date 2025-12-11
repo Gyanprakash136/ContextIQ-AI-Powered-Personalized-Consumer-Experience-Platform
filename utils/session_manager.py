@@ -65,6 +65,13 @@ class SessionManager:
             
         self._save(session_id, data)
 
+    def transfer_session(self, session_id: str, new_user_id: str):
+        """Transfers session ownership to a new user (e.g. guest -> real user)."""
+        data = self.load_session(session_id)
+        if data and data.get("user_id") != new_user_id:
+            data["user_id"] = new_user_id
+            self._save(session_id, data)
+
     def _save(self, session_id: str, data: Dict[str, Any]):
         with open(self._get_path(session_id), "wb") as f:
             pickle.dump(data, f)

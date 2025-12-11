@@ -37,7 +37,7 @@ export default {
         "text-main": "#ededed",
         "glass": "rgba(20, 20, 20, 0.6)",
         primary: {
-          DEFAULT: "#ec1313",
+          DEFAULT: "#3b82f6",
           foreground: "#ffffff",
         },
         border: "hsl(var(--border))",

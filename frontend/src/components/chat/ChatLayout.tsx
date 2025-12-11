@@ -4,7 +4,8 @@ import { ChatSidebar } from './ChatSidebar';
 import { ChatInput } from './ChatInput';
 import { MessageBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
-import { sendMessageToBackend } from '@/api/realApi';
+import { sendMessageToBackend, generateChatTitle } from '@/api/realApi';
+import { getAuth } from 'firebase/auth';
 import { MessageSquare, Sparkles, LogOut, Home, User, PanelLeftOpen } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
@@ -37,14 +38,14 @@ export function ChatLayout() {
 
   const {
     currentSessionId,
-    getCurrentSession,
+    sessions, // Explicitly select sessions to track updates
     createSession,
     addMessage,
     user,
     logout
   } = useSessionStore();
 
-  const currentSession = getCurrentSession();
+  const currentSession = sessions.find(s => s.id === currentSessionId);
 
   // Time-based greeting (Gemini-style)
   const { greetingTitle } = useMemo(() => {
@@ -69,11 +70,12 @@ export function ChatLayout() {
     "Suggest products under my budget",
   ];
 
-  useEffect(() => {
-    if (!currentSessionId) {
-      createSession();
-    }
-  }, [currentSessionId, createSession]);
+  // Session handling moved to parent page (Chat.tsx) routing
+  // useEffect(() => {
+  //   if (!currentSessionId) {
+  //     createSession();
+  //   }
+  // }, [currentSessionId, createSession]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -123,6 +125,32 @@ export function ChatLayout() {
         content: response.agent_response,
         products: response.products
       });
+
+      // Generate title if this was the first exchange in this session
+      // We check if message count is now 2 (1 user + 1 assistant)
+      // currentSession.messages would be updated in next render, but we can check local logic
+      if (currentSession && currentSession.messages.length === 1) { // 1 existing (user) + 1 just added implicitly via state update? No.
+        // Actually currentSession.messages is stale here because of closure.
+        // But we know we just started.
+        // Safer check: If isEmpty was true at start of function?
+        // Yes, isEmpty is derived from currentSession outside.
+      }
+
+      // Better: Just check if local messages length is small. 
+      // Or just call it anyway? The backend handles idempotent calls.
+      if (isEmpty || (currentSession && currentSession.messages.length <= 1)) {
+        // It was a new chat.
+        // Fetch token to generate title
+        // Generate title locally from content (First 4 words)
+        const newTitle = content.split(' ').slice(0, 4).join(' ');
+
+        // Update store with new title immediately
+        useSessionStore.setState(state => ({
+          sessions: state.sessions.map(s =>
+            s.id === currentSessionId ? { ...s, title: newTitle } : s
+          )
+        }));
+      }
 
     } catch (error) {
       console.error("Chat Error", error);

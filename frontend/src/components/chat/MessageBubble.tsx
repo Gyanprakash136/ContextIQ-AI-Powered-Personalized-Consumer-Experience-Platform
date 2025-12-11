@@ -42,10 +42,10 @@ export function MessageBubble({ message }: MessageBubbleProps) {
 
   return (
     <div
-      className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-slide-up`}
+      className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-slide-up w-full`}
     >
       <div
-        className={`max-w-[85%] md:max-w-[70%] ${isUser ? 'bubble-user' : 'bubble-assistant'
+        className={`${isUser ? 'max-w-[85%] md:max-w-[70%] bubble-user' : 'max-w-[95%] w-full bubble-assistant'
           } px-4 py-3`}
       >
         {/* Vision Badge for image messages */}
@@ -75,7 +75,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         )}
 
         {mainContent && (
-          <div className="text-sm text-foreground leading-relaxed">
+          <div className="text-sm text-foreground leading-relaxed font-sans font-normal">
             <ReactMarkdown
               components={{
                 a: ({ node, ...props }) => (

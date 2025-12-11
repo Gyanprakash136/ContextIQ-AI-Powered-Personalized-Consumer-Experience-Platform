@@ -13,7 +13,7 @@ from typing import List, Optional, Union
 from PIL import Image
 import io
 import re
-from tools.scraper import scrape_url
+from tools.scraper import scrape_url, fetch_meta_image
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -89,6 +89,13 @@ async def chat_endpoint(
         # Create new session if invalid ID
         session_id = session_manager.create_session(current_user_id, session_id)
         session_data = session_manager.load_session(session_id)
+    
+    # Check ownership and transfer if needed (Guest -> Real User)
+    if session_data.get("user_id") in ["guest_user", "unknown", None] and current_user_id and current_user_id != "guest_user":
+        print(f"🔄 Transferring session {session_id} to user {current_user_id}")
+        session_manager.transfer_session(session_id, current_user_id)
+        # Update local ref
+        session_data["user_id"] = current_user_id
         
     history = session_data["history"]
 
@@ -181,8 +188,19 @@ async def chat_endpoint(
             final_response["predictive_insight"] = parsed_data.get("predictive_insight", None)
             final_response["session_id"] = parsed_data.get("session_id", session_id) # Trust model if it returns session_id? No, sticky to verified.
             
-            # Ensure products is a list
-            if not isinstance(final_response["products"], list):
+            # Ensure products is a list and populate images if missing
+            if isinstance(final_response["products"], list):
+                for product in final_response["products"]:
+                    if isinstance(product, dict) and product.get("link"):
+                        if not product.get("image") or product.get("image") == "No Image":
+                            print(f"🖼 Fetching image for {product['link']}...")
+                            img_url = fetch_meta_image(product['link'])
+                            if img_url:
+                                product["image"] = img_url
+                                print(f"✅ Found image: {img_url}")
+                            else:
+                                print(f"❌ No image found for {product['link']}")
+            else:
                  final_response["products"] = []
         
         return final_response
@@ -196,7 +214,9 @@ async def chat_endpoint(
 @app.get("/agent/history")
 async def get_history(token_data: dict = Depends(verify_firebase_token)):
     user_id = token_data.get("uid")
-    return session_manager.list_user_sessions(user_id)
+    sessions = session_manager.list_user_sessions(user_id)
+    print(f"📂 History request for user: {user_id}. Found {len(sessions)} sessions.")
+    return sessions
 
 @app.get("/agent/session/{session_id}")
 async def get_session_details(session_id: str, token_data: dict = Depends(verify_firebase_token)):
@@ -230,14 +250,35 @@ async def generate_title(req: TitleRequest, token_data: dict = Depends(verify_fi
     history = data["history"]
     if not history:
         return {"title": "New Chat"}
+    
+    # Generate title using Gemin (lightweight logic)
+    # Simple heuristic: First 3-4 words of first user message
+    first_msg = None
+    for msg in history:
+        if msg.role == "user":
+            first_msg = msg.parts[0].text
+            break
+            
+    if not first_msg:
+        return {"title": "New Chat"}
         
-    first_msg = next((m for m in history if m.role == "user"), None)
-    if first_msg:
-        title = first_msg.parts[0].text[:40].strip() + "..."
-        session_manager.save_session(req.session_id, history, title=title)
-        return {"title": title}
-        
-    return {"title": "New Chat"}
+    # Remove common start phrases
+    clean_msg = first_msg.lower()
+    prefixes = ["help me find", "show me", "i want to buy", "looking for", "search for"]
+    for p in prefixes:
+        if clean_msg.startswith(p):
+            clean_msg = clean_msg[len(p):].strip()
+            break
+            
+    # Take first 4 words
+    words = clean_msg.split()[:4]
+    title = " ".join(words).title()
+    
+    # SAVE THE TITLE
+    session_manager.save_session(req.session_id, history, title=title)
+    
+    return {"title": title}
+
 
 @app.get("/health")
 def health_check():

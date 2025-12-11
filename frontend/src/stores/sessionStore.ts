@@ -1,8 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { auth, googleProvider } from '@/lib/firebase';
-import { signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
+import { signInWithPopup, signOut, User as FirebaseUser, getAuth } from 'firebase/auth';
 import { Product } from '@/api/api';
+import { fetchChatHistory, generateChatTitle, fetchSessionDetails } from '@/api/realApi';
 
 export interface User {
   id: string;
@@ -45,6 +46,7 @@ interface SessionState {
   setCurrentSession: (sessionId: string) => void;
   addMessage: (message: Omit<Message, 'id' | 'timestamp'>) => void;
   getCurrentSession: () => ChatSession | null;
+  syncWithBackend: () => Promise<void>;
 }
 
 const generateId = () => Math.random().toString(36).substring(2, 15);
@@ -75,6 +77,22 @@ export const useSessionStore = create<SessionState>()(
             };
 
             set({ user, isAuthenticated: true });
+
+            // Claim local sessions first
+            const { sessions: localSessions } = get();
+            if (localSessions.length > 0) {
+              const token = await fbUser.getIdToken();
+              const { claimSession } = await import('@/api/realApi');
+
+              await Promise.all(localSessions.map(session =>
+                claimSession(session.id, token)
+              ));
+            }
+
+            set({ user, isAuthenticated: true });
+
+            // Sync history after login
+            await get().syncWithBackend();
           } catch (error) {
             console.error("Login failed:", error);
             throw error;
@@ -104,10 +122,12 @@ export const useSessionStore = create<SessionState>()(
           const { sessions } = get();
 
           // If the most recent session is empty, reuse it to prevent piling up empty chats
-          const recentSession = sessions[0];
-          if (recentSession && recentSession.messages.length === 0) {
-            set({ currentSessionId: recentSession.id });
-            return recentSession.id;
+          if (sessions && sessions.length > 0) {
+            const recentSession = sessions[0];
+            if (recentSession && recentSession.messages.length === 0) {
+              set({ currentSessionId: recentSession.id });
+              return recentSession.id;
+            }
           }
 
           const newSession: ChatSession = {
@@ -155,6 +175,92 @@ export const useSessionStore = create<SessionState>()(
                 : session
             ),
           });
+
+          // Title generation logic is handled in ChatLayout/UI now
+        },
+
+        syncWithBackend: async () => {
+          const auth = getAuth();
+          const user = auth.currentUser;
+          if (!user) return;
+
+          try {
+            const token = await user.getIdToken();
+            const history = await fetchChatHistory(token);
+
+            const backendSessions: ChatSession[] = history.map((h: any) => ({
+              id: h.session_id,
+              title: h.title || "New Chat",
+              messages: [],
+              createdAt: new Date(h.created_at || Date.now()),
+              updatedAt: new Date(h.updated_at || Date.now()),
+            }));
+
+            // Smart Merge: Union by ID
+            const { sessions: localSessions } = get();
+
+            // Map of ID -> Session
+            const sessionMap = new Map<string, ChatSession>();
+
+            // Add local sessions first
+            localSessions.forEach(s => sessionMap.set(s.id, s));
+
+            // Add/Update with Backend sessions
+            backendSessions.forEach(bs => {
+              const existing = sessionMap.get(bs.id);
+              if (existing) {
+                // Update metadata but keep messages if we have them locally and backend doesn't (since we fetch summary only)
+                // Also preserve title if backend is "New Chat" (fix for title reversion)
+                const title = (bs.title === "New Chat" && existing.title !== "New Chat") ? existing.title : bs.title;
+
+                sessionMap.set(bs.id, {
+                  ...existing,
+                  title,
+                  updatedAt: bs.updatedAt, // Trust backend timestamp
+                  // Keep existing messages as backend list doesn't have them
+                });
+              } else {
+                sessionMap.set(bs.id, bs);
+              }
+            });
+
+            const mergedSessions = Array.from(sessionMap.values())
+              .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+            set({ sessions: mergedSessions });
+
+            // If current session is active, maybe fetch full details? 
+            // Only if it has no messages?
+            const { currentSessionId } = get();
+            if (currentSessionId) {
+              const current = sessionMap.get(currentSessionId);
+              // If it came from backend and has empty messages, load them
+              // CRITIAL FIX: Only fetch if we know it came from backend (exists in newSessions)
+              const isBackendSession = backendSessions.some(s => s.id === currentSessionId);
+
+              if (current && current.messages.length === 0 && isBackendSession) {
+                const fullDetails = await fetchSessionDetails(currentSessionId, token);
+                if (fullDetails && fullDetails.messages) {
+                  const mappedMessages: Message[] = fullDetails.messages.map((m: any, idx: number) => ({
+                    id: `msg-${idx}`,
+                    sender: m.role,
+                    type: 'text',
+                    content: m.content,
+                    timestamp: new Date(),
+                  }));
+
+                  set(state => ({
+                    sessions: state.sessions.map(s =>
+                      s.id === currentSessionId ? { ...s, messages: mappedMessages } : s
+                    )
+                  }));
+                }
+              }
+            }
+
+          } catch (e) {
+            console.error("Failed to sync with backend", e);
+          }
         },
 
         getCurrentSession: () => {

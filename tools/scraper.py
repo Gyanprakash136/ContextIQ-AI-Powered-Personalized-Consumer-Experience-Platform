@@ -1,5 +1,4 @@
-
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 
 def scrape_url(url: str):
@@ -8,24 +7,18 @@ def scrape_url(url: str):
     Use this tool when the user provides a link to a product page, review, or article.
     """
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0',
-        }
+        # Use impersonate="chrome" to mimic a real browser perfectly
+        # This helps bypass bot detection on Amazon/Flipkart
+        session = requests.Session(impersonate="chrome")
+        
         # Amazon often requires cookies or returns 503 to headless requests
         # We increase timeout and allow redirects
-        response = requests.get(url, headers=headers, timeout=15, allow_redirects=True)
-        response.raise_for_status()
+        response = session.get(url, timeout=15, allow_redirects=True)
+        # response.raise_for_status() # Relaxed check
         
+        if response.status_code not in [200, 404, 500]: # Allow 500 as it might still have content
+             return f"Error: Status code {response.status_code}"
+
         soup = BeautifulSoup(response.content, 'html.parser')
         
         # Remove script and style elements
@@ -66,7 +59,8 @@ def scrape_url(url: str):
                 pass
 
         if len(clean_text) < 500:
-            return f"Error: Site blocked or empty content (Length: {len(clean_text)}). Please try a different source."
+             # Might be empty but let's return what we have in case of partial success
+             pass
 
         # Limit length to avoid context window issues
         # Reduced to 15k to avoid overwhelming the model
@@ -74,3 +68,59 @@ def scrape_url(url: str):
         
     except Exception as e:
         return f"Error scraping URL: {str(e)}"
+
+def fetch_meta_image(url: str) -> str | None:
+    """
+    Fetches the Open Graph image (og:image) from a given URL.
+    Returns None if no image is found or an error occurs.
+    """
+    try:
+        session = requests.Session(impersonate="chrome")
+        response = session.get(url, timeout=10, allow_redirects=True)
+        
+        # Warn but proceed on non-200
+        if response.status_code != 200:
+            print(f"⚠️ Scraper warning for {url}: Status {response.status_code}")
+            
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Try og:image first
+        og_image = soup.find("meta", property="og:image")
+        if og_image and og_image.get("content"):
+            return og_image["content"]
+            
+        # Try twitter:image
+        twitter_image = soup.find("meta", attrs={"name": "twitter:image"})
+        if twitter_image and twitter_image.get("content"):
+            return twitter_image["content"]
+
+        # Fallback for Amazon
+        if "amazon" in url:
+            # Look for landingImage
+            img = soup.find("img", id="landingImage")
+            if img: return img.get('src')
+            
+            img = soup.find("img", id="imgBlkFront")
+            if img: return img.get('src')
+
+        # Fallback for Flipkart
+        if "flipkart" in url:
+             # Look for images with 'loading="eager"' which main images often have
+             images = soup.find_all("img", attrs={"loading": "eager"})
+             for img in images:
+                 src = img.get("src")
+                 if src and "image" in src and "128/128" not in src:
+                      return src.replace("/128/128/", "/832/832/")
+
+        # Try finding the first large image
+        images = soup.find_all("img", src=True)
+        for img in images:
+             src = img.get("src", "")
+             if "icon" not in src.lower() and "logo" not in src.lower():
+                 from urllib.parse import urljoin
+                 return urljoin(response.url, src)
+
+        return None
+    except Exception as e:
+        print(f"Scraper error: {e}")
+        return None
