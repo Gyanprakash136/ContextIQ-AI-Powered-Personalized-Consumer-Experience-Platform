@@ -13,3 +13,4 @@ pillow
 duckduckgo-search>=6.0.0
 firebase-admin>=6.2.0
 gunicorn
+curl_cffi>=0.5.10
