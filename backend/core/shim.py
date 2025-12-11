@@ -35,11 +35,26 @@ class Agent:
             safety_settings=safety
         )
 
-    def run(self, input, chat_history: list = None, max_iterations: int = 25):
+    def _send_message_with_retry(self, chat, content, retries=3):
+        """Helper to send messages with exponential backoff for rate limits."""
+        for attempt in range(retries + 1):
+            try:
+                return chat.send_message(content)
+            except Exception as e:
+                error_str = str(e)
+                if "ResourceExhausted" in error_str or "429" in error_str or "Quota exceeded" in error_str:
+                    if attempt < retries:
+                        wait_time = (attempt + 1) * 20  # 20s, 40s, 60s
+                        print(f"⚠️ Quota hit. Sleeping {wait_time}s before retry {attempt+1}/{retries}...")
+                        time.sleep(wait_time)
+                        continue
+                raise e
+
+    def run(self, input, chat_history: list = None, max_iterations: int = 8):
         """
         Manual tool orchestration loop.
         Disables automatic function calling and manages tool execution manually.
-        Max 25 iterations to allow for deep scraping (3-10 products) + analysis.
+        Max 8 iterations (reduced from 25) to avoid long waits and rate limits.
         """
         if chat_history is None:
             chat_history = []
@@ -54,36 +69,13 @@ class Agent:
         
         try:
             # Initial message
-            response = chat.send_message(input)
+            response = self._send_message_with_retry(chat, input)
             
             # Orchestration loop
             while iteration < max_iterations:
                 iteration += 1
                 print(f"\n🔄 Iteration {iteration}/{max_iterations}")
                 
-                # RETRY LOGIC FOR GOOGLE API QUOTA
-                retry_count = 0
-                max_retries = 3
-                current_response = None
-                
-                while retry_count <= max_retries:
-                    try:
-                        if start_new_turn:
-                             # This is the first call of the loop or a new turn after tool output
-                             if function_responses:
-                                  current_response = chat.send_message(function_responses)
-                                  function_responses = None # Clear after sending
-                             else:
-                                  # Should typically not happen here unless logic flow changes, 
-                                  # but provided for safety if moved
-                                  pass 
-                        else:
-                             # Should have been handled before loop or previous iteration
-                             pass
-                        break # Success
-                    except Exception as e:
-                        if "429" in str(e) or "ResourceExhausted" in str(e) or "Quota exceeded" in str(e):
-                            retry_count += 1
                 # Check if we have a text response
                 if response.candidates and len(response.candidates) > 0:
                     candidate = response.candidates[0]
