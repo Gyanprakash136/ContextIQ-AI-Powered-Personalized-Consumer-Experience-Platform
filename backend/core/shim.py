@@ -61,6 +61,29 @@ class Agent:
                 iteration += 1
                 print(f"\n🔄 Iteration {iteration}/{max_iterations}")
                 
+                # RETRY LOGIC FOR GOOGLE API QUOTA
+                retry_count = 0
+                max_retries = 3
+                current_response = None
+                
+                while retry_count <= max_retries:
+                    try:
+                        if start_new_turn:
+                             # This is the first call of the loop or a new turn after tool output
+                             if function_responses:
+                                  current_response = chat.send_message(function_responses)
+                                  function_responses = None # Clear after sending
+                             else:
+                                  # Should typically not happen here unless logic flow changes, 
+                                  # but provided for safety if moved
+                                  pass 
+                        else:
+                             # Should have been handled before loop or previous iteration
+                             pass
+                        break # Success
+                    except Exception as e:
+                        if "429" in str(e) or "ResourceExhausted" in str(e) or "Quota exceeded" in str(e):
+                            retry_count += 1
                 # Check if we have a text response
                 if response.candidates and len(response.candidates) > 0:
                     candidate = response.candidates[0]
@@ -135,9 +158,7 @@ class Agent:
                                 )
                         
                         # Send function responses back to model
-                        # Introduce a small delay to avoid rate limits if looping fast
-                        # time.sleep(1) 
-                        response = chat.send_message(function_responses)
+                        response = self._send_message_with_retry(chat, function_responses)
                         continue  # Loop again
                     
                     
