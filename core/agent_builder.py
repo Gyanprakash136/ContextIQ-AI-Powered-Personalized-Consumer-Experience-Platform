@@ -10,7 +10,7 @@ def get_tool_list():
     return [scrape_url, generate_future_insight, search_web, search_internal_catalog]
 
 def build_contextiq_agent():
-    print("🚀 Building ContextIQ Agent...")
+    print(" Building ContextIQ Agent...")
     
     tools = get_tool_list()
     print(f" Loaded Tools: {[t.__name__ for t in tools]}")
