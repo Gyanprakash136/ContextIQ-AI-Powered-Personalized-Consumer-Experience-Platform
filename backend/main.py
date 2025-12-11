@@ -63,7 +63,7 @@ agent = build_contextiq_agent()
 from utils.session_manager import session_manager
 
 @app.post("/agent/chat")
-async def chat_endpoint(
+def chat_endpoint(
     token_data: dict = Depends(verify_firebase_token),
     user_id: Optional[str] = Form(None), 
     session_id: Optional[str] = Form(None), # NEW: Accept session_id
@@ -137,7 +137,7 @@ async def chat_endpoint(
     if image:
         if isinstance(image, UploadFile):
             try:
-                contents = await image.read()
+                contents = image.file.read()
                 img = Image.open(io.BytesIO(contents))
                 input_parts.append(img)
                 input_parts.append("\n[Using the attached image as visual context]\n")

@@ -18,4 +18,4 @@ EXPOSE 8000
 
 # Run the application using Gunicorn with Uvicorn workers
 # Adjust workers/threads based on instance resources
-CMD ["gunicorn", "main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+CMD ["gunicorn", "main:app", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "300"]
