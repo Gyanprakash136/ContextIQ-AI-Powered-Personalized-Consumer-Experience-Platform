@@ -26,6 +26,8 @@ origins = [
     "http://localhost:5173",  # Vite default
     "http://localhost:8080",  # User specified frontend port
     "http://localhost:8000",  # Self
+    "https://contextiq-seven.vercel.app", # Deployed Frontend
+    "https://contextiq-seven.vercel.app/", 
     "*"                       # Allow all for hackathon flexibility
 ]
 
