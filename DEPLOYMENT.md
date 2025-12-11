@@ -10,7 +10,8 @@ This is like Vercel/Heroku. You don't manage servers.
 2.  Go to DigitalOcean -> **Apps** -> **Create App**.
 3.  Select **GitHub** and choose your repository.
 4.  It will detect the `Dockerfile`.
-5.  Edit the service:
+5.  **Source Directory**: Click "Edit" next to the source and change it from `/` to `/backend`.
+6.  Edit the service:
     - **HTTP Port**: Set to `8000`.
 6.  Click **Launch**.
 
