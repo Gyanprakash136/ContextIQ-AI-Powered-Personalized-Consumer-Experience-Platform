@@ -1,0 +1,9 @@
+frontend/
+venv/
+.git/
+__pycache__/
+*.pyc
+.env
+chroma_data/
+sessions/
+.DS_Store
