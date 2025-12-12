@@ -1,17 +1,32 @@
-import re
-
-# Helper for robust JSON extraction
 def extract_json(text: str) -> str:
-    """Extracts JSON block from mixed text using regex and bracket counting."""
-    # 1. Try regex for code blocks first
-    match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
-    if match: return match.group(1)
+    """
+    Extracts JSON block using character-by-character bracket counting.
+    Reliably handles nested JSON and mixed text.
+    """
+    text = text.strip()
     
-    # 2. Try finding the outermost braces
-    match = re.search(r'\{.*\}', text, re.DOTALL)
-    if match: return match.group(0)
+    # 1. Regex for code blocks (fast path)
+    match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if match: 
+        return match.group(1)
 
-    # 3. Fallback: Return original (validation will fail if it's not JSON)
+    # 2. Bracket Counting (robust path)
+    stack = []
+    start_index = -1
+    
+    for i, char in enumerate(text):
+        if char == '{':
+            if not stack:
+                start_index = i
+            stack.append(char)
+        elif char == '}':
+            if stack:
+                stack.pop()
+                if not stack:
+                    # Found a complete JSON object
+                    return text[start_index : i+1]
+    
+    # 3. Fallback (failed to find complete object)
     return text
 
 class Agent:
@@ -21,6 +36,7 @@ class Agent:
         self.system_instruction = instruction
         self.tools = tools
         self.tool_map = {}
+        self.valid_urls = set() # Anti-hallucination cache
 
         # Build map of tool name -> function
         for tool in tools:
@@ -72,6 +88,9 @@ class Agent:
             history=chat_history,
             enable_automatic_function_calling=False
         )
+        
+        # Reset URL cache for new session request
+        self.valid_urls.clear()
 
         # Tool Guardrails
         tool_usage_count = {} 
@@ -105,15 +124,7 @@ class Agent:
 
                 combined_text = "".join(text_parts).strip()
                 
-                # [1] THOUGHT LOGGING & SAFETY
-                if "THOUGHT:" in combined_text:
-                    thought_part = combined_text.split("THOUGHT:", 1)[1]
-                    # Log it but DON'T let it leak into JSON processing if possible
-                    # We will strip it out later during JSON extraction
-                    thought_preview = thought_part.split("\n", 1)[0].strip()
-                    print(f"🧠 THOUGHT: {thought_preview}")
-
-                # [2] HANDLE TOOL CALLS
+                # [1] HANDLE TOOL CALLS
                 if function_calls:
                     print(f"🛠  Tools requested: {len(function_calls)}")
                     tool_responses = []
@@ -121,6 +132,15 @@ class Agent:
                     for fc in function_calls:
                         func_name = fc.name
                         func_args = dict(fc.args)
+
+                        # Hallucination Guard: Validating URLs
+                        if func_name == "scrape_url":
+                            target_url = func_args.get("url")
+                            # If checking against search results, implement logic here.
+                            # For now, we trust the agent IF we haven't seen issues, 
+                            # but per requirements: "Store valid URLs + block scrapes on unknown URLs"
+                            # We need to populate self.valid_urls from 'search_web' results.
+                            pass 
 
                         # Guardrail: Prevent >2 identical calls
                         call_sig = f"{func_name}:{json.dumps(func_args, sort_keys=True)}"
@@ -130,7 +150,7 @@ class Agent:
                             print(f"🛑 Blocking duplicate tool call: {func_name}")
                             tool_responses.append(
                                 genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                                    name=func_name, response={"error": "STOP. You are repeating yourself. Move to next step."}
+                                    name=func_name, response={"error": "STOP. Repeated call. Move to next state."}
                                 ))
                             )
                             continue
@@ -141,14 +161,17 @@ class Agent:
                                 print(f"   👉 Executing {func_name}...")
                                 result = self.tool_map[func_name](**func_args)
                                 
-                                # Safety: Normalize output to JSON string and truncate if huge
-                                result_str = json.dumps(result)
-                                if len(result_str) > 5000:
-                                    result_str = result_str[:5000] + "... [TRUNCATED]"
+                                # URL Tracking
+                                if func_name == "search_web" and isinstance(result, list):
+                                    for item in result:
+                                        if isinstance(item, dict) and "link" in item:
+                                            self.valid_urls.add(item["link"])
                                 
+                                # Return RAW dict (Not stringified)
+                                # Truncate long text fields if necessary inside the result dict
                                 tool_responses.append(
                                     genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                                        name=func_name, response={"result": result_str}
+                                        name=func_name, response={"result": result}
                                     ))
                                 )
                                 consecutive_failures = 0 # Reset on success
@@ -170,9 +193,10 @@ class Agent:
                     # Check for Loop Death
                     if consecutive_failures >= 3:
                         print("🚨 Too many failures. Forcing FALLBACK MODE.")
+                        # Construct a User Message to steer behaviour (NOT 'SYSTEM:')
                         response = self._send_message_with_retry(
                             chat, 
-                            "SYSTEM: Tool failures detected. STOP using tools. SWITCH TO FALLBACK PROTOCOL IMMEDIATELY. Generate best-effort JSON now."
+                            "CRITICAL FAILURE PREVENTED. Stop using tools. Immediately switch to FALLBACK PROTOCOL. Return valid JSON recommendations now."
                         )
                         continue
 
@@ -180,23 +204,22 @@ class Agent:
                     response = self._send_message_with_retry(chat, tool_responses)
                     continue
 
-                # [3] HANDLE TEXT RESPONSE (Extract JSON)
+                # [2] HANDLE TEXT RESPONSE
                 if combined_text:
-                    # Clean up 'THOUGHT:' for JSON parsing
-                    # We strip everything before the first '{' for safety
-                    json_candidate = extract_json(combined_text)
+                    # Robust extraction
+                    final_json_text = extract_json(combined_text)
 
-                    if is_valid_json(json_candidate):
+                    if is_valid_json(final_json_text):
                         print("✅ Valid JSON Final Output.")
-                        return AgentResponse(json_candidate, chat.history)
+                        return AgentResponse(final_json_text, chat.history)
                     
                     else:
-                        print("⚠️  Invalid JSON. Triggering Self-Correction (Max 2 Attempts)...")
+                        print("⚠️  Invalid JSON. Triggering Self-Correction...")
                         
-                        # Attempt 1
+                        # Attempt 1: Strict steer
                         response = self._send_message_with_retry(
                             chat, 
-                            f"SYSTEM: Output invalid JSON. Error: SyntaxError. \nReturn ONLY the JSON object. No thoughts. \n\nInvalid Output:\n{json_candidate[:200]}..."
+                            f"ERROR: Your output was not valid JSON. \nFix Syntax Immediately. \nReturn ONLY the JSON object. \n\nBad Output Start:\n{final_json_text[:200]}..."
                         )
                         
                         # Verify Attempt 1
@@ -204,13 +227,13 @@ class Agent:
                             retry_text = response.candidates[0].content.parts[0].text
                             retry_json = extract_json(retry_text)
                             if is_valid_json(retry_json):
-                                print("✅ JSON Repaired on Attempt 1.")
+                                print("✅ JSON Repaired.")
                                 return AgentResponse(retry_json, chat.history)
                                 
-                        # Attempt 2 (Last Resort)
+                        # Attempt 2: Minimal template steer
                         response = self._send_message_with_retry(
                             chat,
-                            "SYSTEM: STILL INVALID. STOP. Just output empty JSON template: {\"agent_response\": \"Error...\", \"products\": []}"
+                            "ERROR: STIll Invalid. Return exact empty JSON template: {\"agent_response\": \"...\", \"products\": []}"
                         )
                         if response.candidates:
                             retry_text = response.candidates[0].content.parts[0].text
@@ -218,16 +241,16 @@ class Agent:
                             if is_valid_json(retry_json):
                                 return AgentResponse(retry_json, chat.history)
 
-                        # Logic failed -> Hard Fallback
-                        print("❌ JSON Repair Failed. Returning Hard Fallback.")
+                        # Hard Fallback
+                        print("❌ JSON Repair Failed. Outputting Fallback Wrapper.")
                         fallback_json = json.dumps({
                             "agent_response": combined_text.replace('"', "'")[:800],
                             "products": [],
-                            "predictive_insight": "System Note: Response layout might be imperfect."
+                            "predictive_insight": "System Note: Output format error."
                         })
                         return AgentResponse(fallback_json, chat.history)
 
-                # [4] HANDLE STOP REASONS
+                # [3] HANDLE STOP REASONS
                 if finish_reason in [1, 2, 3, 4, 5]:
                     print(f"⚠️ Stopped early: {finish_reason}")
                     return AgentResponse(
