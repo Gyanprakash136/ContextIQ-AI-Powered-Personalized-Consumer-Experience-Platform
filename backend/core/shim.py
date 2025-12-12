@@ -10,35 +10,97 @@ def extract_json(text: str) -> str:
     if match: 
         return match.group(1)
 
-    # 2. Bracket Counting (robust path)
+import json
+import time
+import re
+from typing import Any, Dict, List, Optional
+import os
+
+import google.generativeai as genai
+from google.generativeai.types import content_types
+
+# ---------- Utility helpers ----------
+
+def is_valid_json(text: str) -> bool:
+    try:
+        json.loads(text)
+        return True
+    except Exception:
+        return False
+
+def largest_balanced_json_block(text: str) -> str:
+    """
+    Find the largest balanced JSON object or array block in `text`.
+    Uses bracket counting to identify candidate blocks and returns the largest block found.
+    """
+    candidates = []
     stack = []
-    start_index = -1
-    
-    for i, char in enumerate(text):
-        if char == '{':
+    start = None
+    for i, ch in enumerate(text):
+        if ch == '{' or ch == '[':
             if not stack:
-                start_index = i
-            stack.append(char)
-        elif char == '}':
+                start = i
+            stack.append(ch)
+        elif ch == '}' or ch == ']':
             if stack:
                 stack.pop()
-                if not stack:
-                    # Found a complete JSON object
-                    return text[start_index : i+1]
-    
-    # 3. Fallback (failed to find complete object)
-    return text
+                if not stack and start is not None:
+                    candidates.append(text[start:i + 1])
+                    start = None
+    if not candidates:
+        return text
+    # Return the largest candidate (most likely the full JSON)
+    return max(candidates, key=len)
+
+def extract_json(text: str) -> str:
+    """
+    Robust extraction:
+    - If ```json``` block present, take inner content.
+    - Else select largest balanced JSON block (object or array).
+    - Strip common 'THOUGHT' prefixes if present.
+    """
+    if not text:
+        return text
+    t = text.strip()
+
+    # Remove common "THOUGHT:" markers if model accidentally emitted them.
+    if "THOUGHT:" in t:
+        t = t.split("THOUGHT:")[-1].strip()
+
+    # Fast path: fenced json code block
+    match = re.search(r'```json\s*(\{.*?\}|\[.*?\])\s*```', t, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Robust path: bracket matching for largest block
+    block = largest_balanced_json_block(t)
+    return block.strip()
+
+# ---------- Agent orchestration ----------
+
+class AgentResponse:
+    def __init__(self, output: str, chat_history: List[Dict[str, Any]]):
+        self.output = output
+        self.chat_history = chat_history
 
 class Agent:
-    def __init__(self, model: str, name: str, instruction: str, tools: list):
+    """
+    Production-grade hybrid agent shim.
+    Enforces a strict Python-side State Machine:
+    PLAN -> SEARCH -> SCRAPE -> EXTRACT -> RANK -> SYNTHESIZE
+    """
+
+    MAX_TOOL_PAYLOAD = 5000  # chars to keep from large tool outputs
+
+    def __init__(self, model: str, name: str, instruction: str, tools: List[Any]):
         self.model_name = model
         self.name = name
         self.system_instruction = instruction
         self.tools = tools
         self.tool_map = {}
-        self.valid_urls = set() # Anti-hallucination cache
+        self.valid_urls = set()
+        self.max_iterations_default = 20
 
-        # Build map of tool name -> function
         for tool in tools:
             if callable(tool):
                 self.tool_map[tool.__name__] = tool
@@ -50,7 +112,7 @@ class Agent:
             "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
             "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
             "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
-            "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE"
+            "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
         }
 
         self.model = genai.GenerativeModel(
@@ -60,220 +122,223 @@ class Agent:
             safety_settings=safety
         )
 
-
-    def _send_message_with_retry(self, chat, content, retries=3):
-        """Send a message with exponential backoff retries."""
+    def _send_message_with_retry(self, chat, content, retries: int = 3, backoff_base: int = 2):
         for attempt in range(retries + 1):
             try:
                 return chat.send_message(content)
             except Exception as e:
                 err = str(e)
                 if ("429" in err or "ResourceExhausted" in err or "Quota" in err) and attempt < retries:
-                    wait_time = (attempt + 1) * 20
-                    print(f"Rate limit. Waiting {wait_time}s (attempt {attempt+1}/{retries})")
+                    wait_time = (attempt + 1) * 5 * backoff_base
                     time.sleep(wait_time)
-                else:
-                    raise
+                    continue
+                raise
 
-
-    def run(self, user_input, chat_history=None, max_iterations=12):
-        """
-        Hybrid Thought-Action Loop.
-        Enforces 7-step workflow, correct JSON, and robust error handling.
-        """
+    def run(self, user_input: str, chat_history: Optional[List[Dict[str, Any]]] = None, max_iterations: Optional[int] = None) -> AgentResponse:
         if chat_history is None:
             chat_history = []
+        if max_iterations is None:
+            max_iterations = self.max_iterations_default
 
-        chat = self.model.start_chat(
-            history=chat_history,
-            enable_automatic_function_calling=False
-        )
-        
-        # Reset URL cache for new session request
+        chat = self.model.start_chat(history=chat_history, enable_automatic_function_calling=False)
         self.valid_urls.clear()
-
-        # Tool Guardrails
-        tool_usage_count = {} 
-        consecutive_failures = 0
         
+        consecutive_failures = 0
+        print(f"▶️ Pipeline Start: {user_input}")
+
         try:
-            # Initial Prompt
-            print(f"▶️ User Input: {user_input}")
-            response = self._send_message_with_retry(chat, user_input)
+            # ---------------------------------------------------------
+            # STATE 1: PLAN (Query Refinement)
+            # ---------------------------------------------------------
+            plan_prompt = (
+                "STATE=PLAN\n"
+                "Rewrite the user's request into a concise, marketplace search query that includes budget, gender, brand, "
+                "and site filters. Respond with a single-line query only. Do NOT call any tools in this response.\n\n"
+                f"User request: {user_input}"
+            )
+            print("🔄 State: PLAN")
+            plan_resp = self._send_message_with_retry(chat, plan_prompt)
+            plan_text = ""
+            if plan_resp.candidates and plan_resp.candidates[0].content.parts:
+                plan_text = "".join([p.text for p in plan_resp.candidates[0].content.parts if getattr(p, "text", None)])
+            plan_query = plan_text.strip().splitlines()[0] if plan_text else user_input
+            print(f"   Query: {plan_query}")
 
-            iteration = 0
-            while iteration < max_iterations:
-                iteration += 1
-                print(f"\n🔄 Step {iteration} (Failures: {consecutive_failures})")
-
-                if not response.candidates:
-                    print("❌ No candidates received.")
+            # ---------------------------------------------------------
+            # STATE 2: SEARCH (Tool Execution)
+            # ---------------------------------------------------------
+            print("� State: SEARCH")
+            search_attempts = 0
+            search_results = []
+            while search_attempts < 2 and not search_results:
+                search_attempts += 1
+                if "search_web" in self.tool_map:
+                    try:
+                        tool_response = self.tool_map["search_web"](plan_query)
+                        if isinstance(tool_response, dict) and tool_response.get("status") == "ok":
+                            results = tool_response.get("results", [])
+                            if isinstance(results, list):
+                                for item in results:
+                                    link = item.get("link")
+                                    if link:
+                                        self.valid_urls.add(link)
+                                search_results = results
+                                break
+                        plan_query = plan_query.replace("site:amazon.in OR site:flipkart.com OR site:myntra.com", "")
+                    except Exception:
+                        consecutive_failures += 1
+                        time.sleep(1.0)
+                else:
                     break
 
-                candidate = response.candidates[0]
-                finish_reason = candidate.finish_reason
+            if not search_results:
+                print("⚠️ Search failed. Triggering Fallback.")
+                return AgentResponse(self._fallback_response(user_input), chat.history)
+
+            # ---------------------------------------------------------
+            # STATE 3: SCRAPE (Tool Execution)
+            # ---------------------------------------------------------
+            print("🔄 State: SCRAPE")
+            scrape_candidates = [r.get("link") for r in search_results if r.get("link")]
+            scrape_candidates = scrape_candidates[:4] # Limit to 4 scrapes for speed
+
+            scraped_products = []
+            for url in scrape_candidates:
+                if url not in self.valid_urls: continue
+                if "scrape_url" not in self.tool_map: continue
                 
-                # Parse Output
-                function_calls = []
-                text_parts = []
-                for part in candidate.content.parts:
-                    if hasattr(part, "function_call") and part.function_call:
-                        function_calls.append(part.function_call)
-                    elif hasattr(part, "text") and part.text:
-                        text_parts.append(part.text)
+                try:
+                    print(f"   Scraping: {url}...")
+                    resp = self.tool_map["scrape_url"](url)
+                    if isinstance(resp, dict) and resp.get("status") == "ok":
+                        prod = resp.get("product")
+                        if prod and prod.get("name") and prod.get("price"):
+                            scraped_products.append(prod)
+                except Exception:
+                    pass
+            
+            if len(scraped_products) < 1:
+                print("⚠️ Scrape failed (no valid products). Triggering Fallback.")
+                return AgentResponse(self._fallback_response(user_input), chat.history)
 
-                combined_text = "".join(text_parts).strip()
-                
-                # [1] HANDLE TOOL CALLS
-                if function_calls:
-                    print(f"🛠  Tools requested: {len(function_calls)}")
-                    tool_responses = []
+            # ---------------------------------------------------------
+            # STATE 4: EXTRACT & NORMALIZE
+            # ---------------------------------------------------------
+            print("🔄 State: EXTRACT")
+            normalized = []
+            for p in scraped_products:
+                try:
+                    name = p.get("name")
+                    price = p.get("price")
+                    image = p.get("image_url") or "https://placehold.co/300x300?text=Product+Image"
+                    link = p.get("link") or ""
                     
-                    for fc in function_calls:
-                        func_name = fc.name
-                        func_args = dict(fc.args)
+                    if not name or not price: continue
+                    normalized.append({
+                        "name": name,
+                        "price": price,
+                        "link": link,
+                        "image_url": image,
+                        "reason": p.get("reason", "")
+                    })
+                except Exception: continue
 
-                        # Hallucination Guard: Validating URLs
-                        if func_name == "scrape_url":
-                            target_url = func_args.get("url")
-                            # If checking against search results, implement logic here.
-                            # For now, we trust the agent IF we haven't seen issues, 
-                            # but per requirements: "Store valid URLs + block scrapes on unknown URLs"
-                            # We need to populate self.valid_urls from 'search_web' results.
-                            pass 
+            # ---------------------------------------------------------
+            # STATE 5: RANK & GROUP
+            # ---------------------------------------------------------
+            print("🔄 State: RANK")
+            def price_to_number(p_str):
+                try:
+                    s = re.sub(r'[^\d.]', '', str(p_str))
+                    return float(s) if s else float('inf')
+                except Exception:
+                    return float('inf')
 
-                        # Guardrail: Prevent >2 identical calls
-                        call_sig = f"{func_name}:{json.dumps(func_args, sort_keys=True)}"
-                        tool_usage_count[call_sig] = tool_usage_count.get(call_sig, 0) + 1
-                        
-                        if tool_usage_count[call_sig] > 2:
-                            print(f"🛑 Blocking duplicate tool call: {func_name}")
-                            tool_responses.append(
-                                genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                                    name=func_name, response={"error": "STOP. Repeated call. Move to next state."}
-                                ))
-                            )
-                            continue
+            normalized.sort(key=lambda x: price_to_number(x.get("price")))
+            
+            # Simple grouping
+            groups = {"Men": [], "Women": [], "Unisex": []}
+            lower_input = user_input.lower()
+            for item in normalized:
+                n = item["name"].lower()
+                if "women" in n or "women" in lower_input: groups["Women"].append(item)
+                elif "men" in n or "men" in lower_input: groups["Men"].append(item)
+                else: groups["Unisex"].append(item)
 
-                        # Execute Tool
-                        if func_name in self.tool_map:
-                            try:
-                                print(f"   👉 Executing {func_name}...")
-                                result = self.tool_map[func_name](**func_args)
-                                
-                                # URL Tracking
-                                if func_name == "search_web" and isinstance(result, list):
-                                    for item in result:
-                                        if isinstance(item, dict) and "link" in item:
-                                            self.valid_urls.add(item["link"])
-                                
-                                # Return RAW dict (Not stringified)
-                                # Truncate long text fields if necessary inside the result dict
-                                tool_responses.append(
-                                    genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                                        name=func_name, response={"result": result}
-                                    ))
-                                )
-                                consecutive_failures = 0 # Reset on success
-                            except Exception as e:
-                                print(f"   ❌ Tool Error: {e}")
-                                tool_responses.append(
-                                    genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                                        name=func_name, response={"error": str(e)}
-                                    ))
-                                )
-                                consecutive_failures += 1
-                        else:
-                            tool_responses.append(
-                                genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                                    name=func_name, response={"error": "Function not found"}
-                                ))
-                            )
+            # Rebalance
+            for group in ("Men", "Women"):
+                while len(groups[group]) < 3 and groups["Unisex"]:
+                    groups[group].append(groups["Unisex"].pop(0))
+            
+            # Flatten for synthesis
+            final_list = []
+            for k, v in groups.items():
+                final_list.extend(v[:4]) # Top 4 per group max
 
-                    # Check for Loop Death
-                    if consecutive_failures >= 3:
-                        print("🚨 Too many failures. Forcing FALLBACK MODE.")
-                        # Construct a User Message to steer behaviour (NOT 'SYSTEM:')
-                        response = self._send_message_with_retry(
-                            chat, 
-                            "CRITICAL FAILURE PREVENTED. Stop using tools. Immediately switch to FALLBACK PROTOCOL. Return valid JSON recommendations now."
-                        )
-                        continue
-
-                    # Send results back
-                    response = self._send_message_with_retry(chat, tool_responses)
-                    continue
-
-                # [2] HANDLE TEXT RESPONSE
-                if combined_text:
-                    # Robust extraction
-                    final_json_text = extract_json(combined_text)
-
-                    if is_valid_json(final_json_text):
-                        print("✅ Valid JSON Final Output.")
-                        return AgentResponse(final_json_text, chat.history)
-                    
-                    else:
-                        print("⚠️  Invalid JSON. Triggering Self-Correction...")
-                        
-                        # Attempt 1: Strict steer
-                        response = self._send_message_with_retry(
-                            chat, 
-                            f"ERROR: Your output was not valid JSON. \nFix Syntax Immediately. \nReturn ONLY the JSON object. \n\nBad Output Start:\n{final_json_text[:200]}..."
-                        )
-                        
-                        # Verify Attempt 1
-                        if response.candidates:
-                            retry_text = response.candidates[0].content.parts[0].text
-                            retry_json = extract_json(retry_text)
-                            if is_valid_json(retry_json):
-                                print("✅ JSON Repaired.")
-                                return AgentResponse(retry_json, chat.history)
-                                
-                        # Attempt 2: Minimal template steer
-                        response = self._send_message_with_retry(
-                            chat,
-                            "ERROR: STIll Invalid. Return exact empty JSON template: {\"agent_response\": \"...\", \"products\": []}"
-                        )
-                        if response.candidates:
-                            retry_text = response.candidates[0].content.parts[0].text
-                            retry_json = extract_json(retry_text)
-                            if is_valid_json(retry_json):
-                                return AgentResponse(retry_json, chat.history)
-
-                        # Hard Fallback
-                        print("❌ JSON Repair Failed. Outputting Fallback Wrapper.")
-                        fallback_json = json.dumps({
-                            "agent_response": combined_text.replace('"', "'")[:800],
-                            "products": [],
-                            "predictive_insight": "System Note: Output format error."
-                        })
-                        return AgentResponse(fallback_json, chat.history)
-
-                # [3] HANDLE STOP REASONS
-                if finish_reason in [1, 2, 3, 4, 5]:
-                    print(f"⚠️ Stopped early: {finish_reason}")
-                    return AgentResponse(
-                        json.dumps({"agent_response": f"I couldn't finish (Code {finish_reason}). Please try again.", "products": []}), 
-                        chat.history
-                    )
-
-            # Max Iterations Reached
-            print("🛑 Max iterations reached.")
-            return AgentResponse(
-                 json.dumps({"agent_response": "I apologize, but I timed out. Please try a simpler request.", "products": []}), 
-                 chat.history
+            # ---------------------------------------------------------
+            # STATE 6: SYNTHESIZE (LLM Persona injection)
+            # ---------------------------------------------------------
+            print("🔄 State: SYNTHESIZE")
+            
+            synthesis_prompt = (
+                "STATE=FORMAT\n"
+                f"I have found these products based on your search (Query: {plan_query}):\n"
+                f"{json.dumps(final_list)}\n\n"
+                "TASK: Generate the Final JSON response.\n"
+                "1. act as a friendly Shopkeeper.\n"
+                "2. 'products' array must contain the exact items above.\n"
+                "3. `agent_response` must be a markdown chat message recommending these items with links.\n"
+                "4. `predictive_insight` should be generated now.\n"
+                "Return ONLY valid JSON."
             )
+            
+            final_resp = self._send_message_with_retry(chat, synthesis_prompt)
+            final_text = ""
+            if final_resp.candidates and final_resp.candidates[0].content.parts:
+                final_text = final_resp.candidates[0].content.parts[0].text
+            
+            final_json = extract_json(final_text)
+            
+            if is_valid_json(final_json):
+                print("✅ Success.")
+                return AgentResponse(final_json, chat.history)
+            else:
+                print("⚠️ JSON Generation failed. Using fallback formatter.")
+                # Fallback to python formatting if LLM JSON fails
+                return AgentResponse(self._fallback_response(user_input, "JSON Generation Error"), chat.history)
 
         except Exception as e:
-            print(f"🔥 Critical Agent Error: {e}")
-            return AgentResponse(
-                json.dumps({"agent_response": f"Internal Error: {str(e)}", "products": []}), 
-                chat_history
-            )
+            print(f"🔥 Critical Pipeline Error: {e}")
+            fallback = self._fallback_response(user_input, error=str(e))
+            return AgentResponse(fallback, chat_history)
 
+    def _fallback_response(self, user_input: str, error: Optional[str] = None) -> str:
+        """
+        Deterministic fallback that never calls external tools.
+        """
+        fallback_catalog = [
+            {"name": "boAt Airdopes 141", "price": "₹1,499"},
+            {"name": "realme Buds T100", "price": "₹2,499"},
+            {"name": "JBL Tune 215TWS", "price": "₹2,999"}
+        ]
+        
+        # Format links to safe search
+        products = []
+        for item in fallback_catalog:
+             products.append({
+                 "name": item["name"],
+                 "price": item["price"],
+                 "link": f"https://www.amazon.in/s?k={item['name'].replace(' ', '+')}",
+                 "image_url": "https://placehold.co/300x300?text=Best+Seller",
+                 "reason": "Top seller fallback"
+             })
 
-class AgentResponse:
-    def __init__(self, output, chat_history):
-        self.output = output
-        self.chat_history = chat_history
+        payload = {
+            "agent_response": "I'm having trouble connecting to live stores right now, but here are some reliable top-sellers you can check out on Amazon:",
+            "products": products,
+            "predictive_insight": "Since you're looking for audio, check out protective cases too."
+        }
+        if error:
+            payload["_debug"] = str(error)
+
+        return json.dumps(payload, ensure_ascii=False)
