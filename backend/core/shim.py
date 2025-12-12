@@ -164,12 +164,14 @@ class Agent:
 
         try:
             # ---------------------------------------------------------
-            # STATE 1: PLAN (Query Refinement)
+            # STATE 1: PLAN (Query Refinement OR Chat Detection)
             # ---------------------------------------------------------
             plan_prompt = (
                 "STATE=PLAN\n"
-                "Rewrite the user's request into a concise, marketplace search query that includes budget, gender, brand, "
-                "and site filters. Respond with a single-line query only. Do NOT call any tools in this response.\n\n"
+                "Analyze the user's request.\n"
+                "1. If it is a Product Search (e.g., 'buy laptop', 'best shoes'), rewrite it into a concise marketplace query.\n"
+                "2. If it is General Conversation (e.g., 'Hi', 'Who are you', 'how are you'), respond EXACTLY with: SKIP_SEARCH\n"
+                "Respond with the single-line query OR 'SKIP_SEARCH' only. Do NOT call tools.\n\n"
                 f"User request: {user_text_query}"
             )
             print("🔄 State: PLAN")
@@ -178,103 +180,112 @@ class Agent:
             if plan_resp.candidates and plan_resp.candidates[0].content.parts:
                 plan_text = "".join([p.text for p in plan_resp.candidates[0].content.parts if getattr(p, "text", None)])
             plan_query = plan_text.strip().splitlines()[0] if plan_text else user_text_query
-            print(f"   Query: {plan_query}")
+            
+            skip_search = "SKIP_SEARCH" in plan_query
+            print(f"   Query: {plan_query} (Skip: {skip_search})")
 
             # ---------------------------------------------------------
             # STATE 2: SEARCH (Tool Execution)
             # ---------------------------------------------------------
-            print("🔄 State: SEARCH")
-            search_attempts = 0
             search_results = []
-            while search_attempts < 2 and not search_results:
-                search_attempts += 1
-                if "search_web" in self.tool_map:
-                    try:
-                        tool_response = self.tool_map["search_web"](plan_query)
-                        if isinstance(tool_response, dict) and tool_response.get("status") == "ok":
-                            results = tool_response.get("results", [])
-                            if isinstance(results, list):
-                                for item in results:
-                                    link = item.get("link")
-                                    if link:
-                                        self.valid_urls.add(link)
-                                search_results = results
-                                break
-                        plan_query = plan_query.replace("site:amazon.in OR site:flipkart.com OR site:myntra.com", "")
-                    except Exception:
-                        consecutive_failures += 1
-                        time.sleep(1.0)
-                else:
-                    break
+            if not skip_search:
+                print("🔄 State: SEARCH")
+                search_attempts = 0
+                while search_attempts < 2 and not search_results:
+                    search_attempts += 1
+                    if "search_web" in self.tool_map:
+                        try:
+                            tool_response = self.tool_map["search_web"](plan_query)
+                            if isinstance(tool_response, dict) and tool_response.get("status") == "ok":
+                                results = tool_response.get("results", [])
+                                if isinstance(results, list):
+                                    for item in results:
+                                        link = item.get("link")
+                                        if link:
+                                            self.valid_urls.add(link)
+                                    search_results = results
+                                    break
+                            plan_query = plan_query.replace("site:amazon.in OR site:flipkart.com OR site:myntra.com", "")
+                        except Exception:
+                            consecutive_failures += 1
+                            time.sleep(1.0)
+                    else:
+                        break
 
-            if not search_results:
-                print("⚠️ Search failed. Triggering Fallback.")
-                return AgentResponse(self._fallback_response(user_text_query), chat.history)
+                if not search_results:
+                    # If search was attempted but failed, we trigger fallback.
+                    # If we skipped search, we just proceed.
+                    print("⚠️ Search failed. Triggering Fallback.")
+                    return AgentResponse(self._fallback_response(user_text_query), chat.history)
 
             # ---------------------------------------------------------
             # STATE 3: SCRAPE (Tool Execution)
             # ---------------------------------------------------------
-            print("🔄 State: SCRAPE")
-            scrape_candidates = [r.get("link") for r in search_results if r.get("link")]
-            scrape_candidates = scrape_candidates[:4] # Limit to 4 scrapes for speed
-
             scraped_products = []
-            for url in scrape_candidates:
-                if url not in self.valid_urls: continue
-                if "scrape_url" not in self.tool_map: continue
+            if not skip_search and search_results:
+                print("🔄 State: SCRAPE")
+                scrape_candidates = [r.get("link") for r in search_results if r.get("link")]
+                scrape_candidates = scrape_candidates[:4] # Limit to 4 scrapes for speed
+
+                for url in scrape_candidates:
+                    if url not in self.valid_urls: continue
+                    if "scrape_url" not in self.tool_map: continue
+                    
+                    try:
+                        print(f"   Scraping: {url}...")
+                        resp = self.tool_map["scrape_url"](url)
+                        if isinstance(resp, dict) and resp.get("status") == "ok":
+                            prod = resp.get("product")
+                            if prod and prod.get("name") and prod.get("price"):
+                                scraped_products.append(prod)
+                    except Exception:
+                        pass
                 
-                try:
-                    print(f"   Scraping: {url}...")
-                    resp = self.tool_map["scrape_url"](url)
-                    if isinstance(resp, dict) and resp.get("status") == "ok":
-                        prod = resp.get("product")
-                        if prod and prod.get("name") and prod.get("price"):
-                            scraped_products.append(prod)
-                except Exception:
-                    pass
-            
-            if len(scraped_products) < 1:
-                print("⚠️ Scrape failed (no valid products). Triggering Fallback.")
-                return AgentResponse(self._fallback_response(user_text_query), chat.history)
+                if len(scraped_products) < 1:
+                    print("⚠️ Scrape failed (no valid products). Triggering Fallback.")
+                    return AgentResponse(self._fallback_response(user_text_query), chat.history)
 
             # ---------------------------------------------------------
             # STATE 4: EXTRACT & NORMALIZE
             # ---------------------------------------------------------
-            print("🔄 State: EXTRACT")
             normalized = []
-            for p in scraped_products:
-                try:
-                    name = p.get("name")
-                    price = p.get("price")
-                    image = p.get("image_url") or "https://placehold.co/300x300?text=Product+Image"
-                    link = p.get("link") or ""
-                    
-                    if not name or not price: continue
-                    normalized.append({
-                        "name": name,
-                        "price": price,
-                        "link": link,
-                        "image_url": image,
-                        "reason": p.get("reason", "")
-                    })
-                except Exception: continue
+            if not skip_search:
+                print("🔄 State: EXTRACT")
+                for p in scraped_products:
+                    try:
+                        name = p.get("name")
+                        price = p.get("price")
+                        image = p.get("image_url") or "https://placehold.co/300x300?text=Product+Image"
+                        link = p.get("link") or ""
+                        
+                        if not name or not price: continue
+                        normalized.append({
+                            "name": name,
+                            "price": price,
+                            "link": link,
+                            "image_url": image,
+                            "reason": p.get("reason", "")
+                        })
+                    except Exception: continue
 
             # ---------------------------------------------------------
             # STATE 5: RANK & FILTER
             # ---------------------------------------------------------
-            print("🔄 State: RANK")
-            def price_to_number(p_str):
-                try:
-                    s = re.sub(r'[^\d.]', '', str(p_str))
-                    return float(s) if s else float('inf')
-                except Exception:
-                    return float('inf')
+            final_list = []
+            if not skip_search:
+                print("🔄 State: RANK")
+                def price_to_number(p_str):
+                    try:
+                        s = re.sub(r'[^\d.]', '', str(p_str))
+                        return float(s) if s else float('inf')
+                    except Exception:
+                        return float('inf')
 
-            # Sort by price (Low -> High)
-            normalized.sort(key=lambda x: price_to_number(x.get("price")))
-            
-            # Take top 6 verified items
-            final_list = normalized[:6]
+                # Sort by price (Low -> High)
+                normalized.sort(key=lambda x: price_to_number(x.get("price")))
+                
+                # Take top 6 verified items
+                final_list = normalized[:6]
 
             # ---------------------------------------------------------
             # STATE 6: SYNTHESIZE (LLM Persona injection)
@@ -283,14 +294,13 @@ class Agent:
             
             synthesis_prompt = (
                 "STATE=FORMAT\n"
-                f"I have found these products based on your search (Query: {plan_query}):\n"
-                f"{json.dumps(final_list)}\n\n"
+                f"User Output Logic:\n"
+                f"1. IF products are provided: Recommend them as a friendly Shopkeeper.\n"
+                f"2. IF products are EMPTY (Chat Mode): Respond to the User's message naturally (e.g. greeting, joke, explanation) without inventing products.\n\n"
+                f"User Request: {user_text_query}\n"
+                f"Products Found: {json.dumps(final_list)}\n\n"
                 "TASK: Generate the Final JSON response.\n"
-                "1. act as a friendly Shopkeeper.\n"
-                "2. 'products' array must contain the exact items above.\n"
-                "3. `agent_response` must be a markdown chat message recommending these items with links.\n"
-                "4. `predictive_insight` should be generated now.\n"
-                "Return ONLY valid JSON."
+                "Return ONLY valid JSON with keys: 'agent_response', 'products', 'predictive_insight'."
             )
             
             final_resp = self._send_message_with_retry(chat, synthesis_prompt)
