@@ -134,7 +134,17 @@ class Agent:
                     continue
                 raise
 
-    def run(self, user_input: str, chat_history: Optional[List[Dict[str, Any]]] = None, max_iterations: Optional[int] = None) -> AgentResponse:
+    def _extract_text_from_input(self, user_input: Any) -> str:
+        """Helper to safely extract string text from potentially multimodal input."""
+        if isinstance(user_input, str):
+            return user_input
+        if isinstance(user_input, list):
+            # Extract only string parts
+            text_parts = [p for p in user_input if isinstance(p, str)]
+            return " ".join(text_parts)
+        return str(user_input)
+
+    def run(self, user_input: Any, chat_history: Optional[List[Dict[str, Any]]] = None, max_iterations: Optional[int] = None) -> AgentResponse:
         if chat_history is None:
             chat_history = []
         if max_iterations is None:
@@ -143,8 +153,11 @@ class Agent:
         chat = self.model.start_chat(history=chat_history, enable_automatic_function_calling=False)
         self.valid_urls.clear()
         
+        # Safe text extraction for logic that needs string (logging, regex, fallback)
+        user_text_query = self._extract_text_from_input(user_input)
+        
         consecutive_failures = 0
-        print(f"▶️ Pipeline Start: {user_input}")
+        print(f"▶️ Pipeline Start: {user_text_query}")
 
         try:
             # ---------------------------------------------------------
@@ -154,20 +167,20 @@ class Agent:
                 "STATE=PLAN\n"
                 "Rewrite the user's request into a concise, marketplace search query that includes budget, gender, brand, "
                 "and site filters. Respond with a single-line query only. Do NOT call any tools in this response.\n\n"
-                f"User request: {user_input}"
+                f"User request: {user_text_query}"
             )
             print("🔄 State: PLAN")
             plan_resp = self._send_message_with_retry(chat, plan_prompt)
             plan_text = ""
             if plan_resp.candidates and plan_resp.candidates[0].content.parts:
                 plan_text = "".join([p.text for p in plan_resp.candidates[0].content.parts if getattr(p, "text", None)])
-            plan_query = plan_text.strip().splitlines()[0] if plan_text else user_input
+            plan_query = plan_text.strip().splitlines()[0] if plan_text else user_text_query
             print(f"   Query: {plan_query}")
 
             # ---------------------------------------------------------
             # STATE 2: SEARCH (Tool Execution)
             # ---------------------------------------------------------
-            print("� State: SEARCH")
+            print("🔄 State: SEARCH")
             search_attempts = 0
             search_results = []
             while search_attempts < 2 and not search_results:
@@ -193,7 +206,7 @@ class Agent:
 
             if not search_results:
                 print("⚠️ Search failed. Triggering Fallback.")
-                return AgentResponse(self._fallback_response(user_input), chat.history)
+                return AgentResponse(self._fallback_response(user_text_query), chat.history)
 
             # ---------------------------------------------------------
             # STATE 3: SCRAPE (Tool Execution)
@@ -219,7 +232,7 @@ class Agent:
             
             if len(scraped_products) < 1:
                 print("⚠️ Scrape failed (no valid products). Triggering Fallback.")
-                return AgentResponse(self._fallback_response(user_input), chat.history)
+                return AgentResponse(self._fallback_response(user_text_query), chat.history)
 
             # ---------------------------------------------------------
             # STATE 4: EXTRACT & NORMALIZE
@@ -290,11 +303,11 @@ class Agent:
             else:
                 print("⚠️ JSON Generation failed. Using fallback formatter.")
                 # Fallback to python formatting if LLM JSON fails
-                return AgentResponse(self._fallback_response(user_input, "JSON Generation Error"), chat.history)
+                return AgentResponse(self._fallback_response(user_text_query, "JSON Generation Error"), chat.history)
 
         except Exception as e:
             print(f"🔥 Critical Pipeline Error: {e}")
-            fallback = self._fallback_response(user_input, error=str(e))
+            fallback = self._fallback_response(user_text_query, error=str(e))
             return AgentResponse(fallback, chat_history)
 
     def _fallback_response(self, user_input: str, error: Optional[str] = None) -> str:
@@ -303,6 +316,10 @@ class Agent:
         1. Try to generate relevant products using LLM internal knowledge (Blind Mode).
         2. If that fails, revert to a safe generic search link.
         """
+        # Ensure user_input is a string if somehow passed as list here (double-safety)
+        if isinstance(user_input, list): 
+             user_input = " ".join([str(p) for p in user_input if isinstance(p, str)])
+             
         try:
             # 1. Ask LLM for known products
             prompt = (
@@ -344,7 +361,7 @@ class Agent:
         
         # 2. Ultimate Safety Net (If LLM generation fails)
         # Just give a generic search link for the user's query
-        safe_query = re.sub(r'[^a-zA-Z0-9 ]', '', user_input).replace(" ", "+")
+        safe_query = re.sub(r'[^a-zA-Z0-9 ]', '', str(user_input)).replace(" ", "+")
         fallback_link = f"https://www.amazon.in/s?k={safe_query}"
         
         payload = {
