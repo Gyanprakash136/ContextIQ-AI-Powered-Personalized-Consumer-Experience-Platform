@@ -158,7 +158,8 @@ class Agent:
         self.fallback_chain = []
         if model not in ["gemini-1.5-flash", "gemini-1.5-pro"]:
              self.fallback_chain.append(model)
-        self.fallback_chain.extend(["gemini-1.5-flash", "gemini-1.5-pro"])
+        # Use specific versions to avoid alias 404s
+        self.fallback_chain.extend(["gemini-1.5-flash", "gemini-1.5-pro-001", "gemini-1.0-pro"])
         
         self.current_model_index = 0
         self._init_model(self.fallback_chain[0])
