@@ -1,4 +1,3 @@
-```python
 from core.shim import Agent
 from core.prompts import AGENT_INSTRUCTION
 
