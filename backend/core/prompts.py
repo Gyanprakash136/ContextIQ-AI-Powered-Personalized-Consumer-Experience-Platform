@@ -71,7 +71,11 @@ If search_web() returns "No results", "Error", or fails to find specific items:
 2.  DO NOT say "I couldn't find anything".
 3.  INSTEAD, use your internal knowledge to recommend popular/standard products that fit the user's criteria.
 4.  Mention: "I couldn't access live listings right now, but here are some generally highly-rated options in this budget:"
-5.  Provide the JSON output with generic links (e.g., https://amazon.in/s?k=product+name) or best-effort links.
+5.  **CRITICAL**: Since you cannot verify specific product links, DO NOT guess specific URLs (like amazon.in/dp/...). 
+    INSTEAD, use **General Search Links**:
+    -   `https://www.amazon.in/s?k=[Product+Name]`
+    -   `https://www.flipkart.com/search?q=[Product+Name]`
+    This ensures the user gets a working link even if your internal data is old.
 
 ==========================================================
                   TOOL USAGE RULES
