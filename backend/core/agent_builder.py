@@ -12,7 +12,7 @@ def build_contextiq_agent():
     print(f" Loaded Tools: {[t.__name__ for t in tools]}")
     # Initialize Agent
     agent = Agent(
-        model="gemini-2.0-flash-exp",
+        model="gemini-1.5-flash",
         name="ContextIQ_Assistant",
         instruction=AGENT_INSTRUCTION,
         tools=tools
