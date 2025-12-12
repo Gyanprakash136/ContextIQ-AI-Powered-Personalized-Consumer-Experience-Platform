@@ -155,7 +155,7 @@ class Agent:
             safety_settings=safety
         )
 
-    def _send_message_with_retry(self, chat, content, retries: int = 3, backoff_base: int = 2):
+    def _send_message_with_retry(self, chat, content, retries: int = 10, backoff_base: int = 2):
         attempt = 0
         while attempt <= retries:
             try:
@@ -164,29 +164,42 @@ class Agent:
                 err = str(e)
                 # Check for Quota or Rate Limit errors
                 if ("429" in err or "ResourceExhausted" in err or "Quota" in err):
-                    print(f"⚠️ Quota Warning (Attempt {attempt + 1}/{retries + 1}): {err}")
+                    print(f"⚠️ Quota Warning (Attempt {attempt + 1}/{retries + 1}): {err[:100]}...")
+
+                    # Intelligent Backoff: Check if error specifies a wait time
+                    wait_match = re.search(r'retry in (\d+(\.\d+)?)s', err)
+                    if wait_match:
+                        forced_wait = float(wait_match.group(1))
+                        # Cap forced wait to avoid hanging forever (e.g. 10 mins), but honor small waits
+                        if forced_wait < 120:
+                             print(f"🛑 Upstream requested wait: {forced_wait}s. Sleeping...")
+                             time.sleep(forced_wait + 1) # Add buffer
+                             # Don't increment attempt if we explicitly waited? No, still increment to avoid infinite loop
+                             attempt += 1
+                             continue
                     
                     # Try to rotate key first
                     if self._rotate_api_key():
                         print("🔄 Switched to next API Key. Retrying immediately...")
-                        time.sleep(1) # Brief pause for config propagation
+                        time.sleep(2) # Increased pause for config propagation
                         
-                        # Increment attempt to prevent infinite loops, but consider increasing default retries if needed
                         attempt += 1
                         if attempt > retries:
                              print("❌ Max retries reached even after rotation.")
+                             # If we rotated but still ran out, raise
                              raise
                         continue
                     
                     # If rotation failed (no more keys) or single key, use backoff
                     if attempt < retries:
-                        wait_time = (attempt + 1) * 5 * backoff_base
+                        wait_time = (attempt + 1) * 3 * backoff_base # Reduced multiplier since we have more retries
                         print(f"⏳ Waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
                         attempt += 1
                         continue
                 
                 # If we get here: either not a quota error, or we ran out of retries/rotations
+                print(f"❌ Unrecoverable Error or Retries Exhausted: {err}")
                 raise
 
     def _rotate_api_key(self) -> bool:
