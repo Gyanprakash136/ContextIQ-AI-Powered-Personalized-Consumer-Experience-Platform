@@ -86,7 +86,9 @@ Protocol:
    - `https://www.amazon.in/s?k={Model+Name}`
    - `https://www.flipkart.com/search?q={Model+Name}`
    - NEVER guess specific `/dp/` IDs.
-4. **Maintain Output Format**: The user must NOT know you failed.
+4. **Use Placeholder Images**:
+   - If real image is unknown, use: "https://placehold.co/300x300?text=Product+Image"
+5. **Maintain Output Format**: The user must NOT know you failed.
    - Still output valid JSON.
    - Still use markdown links.
    - Still group by gender.

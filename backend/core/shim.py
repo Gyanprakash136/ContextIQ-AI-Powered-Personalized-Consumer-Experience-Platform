@@ -1,18 +1,18 @@
-import google.generativeai as genai
-from google.generativeai.types import content_types
-import json
-import os
-import time
+import re
 
+# Helper for robust JSON extraction
+def extract_json(text: str) -> str:
+    """Extracts JSON block from mixed text using regex and bracket counting."""
+    # 1. Try regex for code blocks first
+    match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if match: return match.group(1)
+    
+    # 2. Try finding the outermost braces
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if match: return match.group(0)
 
-def is_valid_json(text: str) -> bool:
-    """Check whether a string is valid JSON."""
-    try:
-        json.loads(text)
-        return True
-    except:
-        return False
-
+    # 3. Fallback: Return original (validation will fail if it's not JSON)
+    return text
 
 class Agent:
     def __init__(self, model: str, name: str, instruction: str, tools: list):
@@ -105,10 +105,13 @@ class Agent:
 
                 combined_text = "".join(text_parts).strip()
                 
-                # [1] THOUGHT LOGGING
+                # [1] THOUGHT LOGGING & SAFETY
                 if "THOUGHT:" in combined_text:
-                    thought = combined_text.split("THOUGHT:", 1)[1].split("\n", 1)[0].strip()
-                    print(f"🧠 THOUGHT: {thought}")
+                    thought_part = combined_text.split("THOUGHT:", 1)[1]
+                    # Log it but DON'T let it leak into JSON processing if possible
+                    # We will strip it out later during JSON extraction
+                    thought_preview = thought_part.split("\n", 1)[0].strip()
+                    print(f"🧠 THOUGHT: {thought_preview}")
 
                 # [2] HANDLE TOOL CALLS
                 if function_calls:
@@ -137,9 +140,15 @@ class Agent:
                             try:
                                 print(f"   👉 Executing {func_name}...")
                                 result = self.tool_map[func_name](**func_args)
+                                
+                                # Safety: Normalize output to JSON string and truncate if huge
+                                result_str = json.dumps(result)
+                                if len(result_str) > 5000:
+                                    result_str = result_str[:5000] + "... [TRUNCATED]"
+                                
                                 tool_responses.append(
                                     genai.protos.Part(function_response=genai.protos.FunctionResponse(
-                                        name=func_name, response={"result": result}
+                                        name=func_name, response={"result": result_str}
                                     ))
                                 )
                                 consecutive_failures = 0 # Reset on success
@@ -171,37 +180,48 @@ class Agent:
                     response = self._send_message_with_retry(chat, tool_responses)
                     continue
 
-                # [3] HANDLE TEXT RESPONSE
+                # [3] HANDLE TEXT RESPONSE (Extract JSON)
                 if combined_text:
-                    # Clean up 'THOUGHT:' for checking JSON
-                    clean_text = combined_text
-                    if "THOUGHT:" in clean_text:
-                         # Attempt to isolate JSON part if mixed
-                         pass
+                    # Clean up 'THOUGHT:' for JSON parsing
+                    # We strip everything before the first '{' for safety
+                    json_candidate = extract_json(combined_text)
 
-                    if is_valid_json(clean_text):
+                    if is_valid_json(json_candidate):
                         print("✅ Valid JSON Final Output.")
-                        return AgentResponse(clean_text, chat.history)
+                        return AgentResponse(json_candidate, chat.history)
                     
                     else:
-                        print("⚠️  Invalid JSON. Triggering Self-Correction...")
-                        # Self-Correction Loop (One Try)
+                        print("⚠️  Invalid JSON. Triggering Self-Correction (Max 2 Attempts)...")
+                        
+                        # Attempt 1
                         response = self._send_message_with_retry(
                             chat, 
-                            f"SYSTEM: Your last output was NOT valid JSON. \nFix Syntax Immediately. \nReturn ONLY the JSON object. \n\nInvalid Output was:\n{clean_text[:500]}..."
+                            f"SYSTEM: Output invalid JSON. Error: SyntaxError. \nReturn ONLY the JSON object. No thoughts. \n\nInvalid Output:\n{json_candidate[:200]}..."
                         )
                         
-                        # Verify the correction immediately
-                        if response.candidates and response.candidates[0].content.parts:
+                        # Verify Attempt 1
+                        if response.candidates:
                             retry_text = response.candidates[0].content.parts[0].text
-                            if is_valid_json(retry_text):
-                                print("✅ JSON Repaired Successfully.")
-                                return AgentResponse(retry_text, chat.history)
-                        
-                        # If still failed, force hard fallback wrapper
-                        print("❌ JSON Repair Failed. Wrapping text.")
+                            retry_json = extract_json(retry_text)
+                            if is_valid_json(retry_json):
+                                print("✅ JSON Repaired on Attempt 1.")
+                                return AgentResponse(retry_json, chat.history)
+                                
+                        # Attempt 2 (Last Resort)
+                        response = self._send_message_with_retry(
+                            chat,
+                            "SYSTEM: STILL INVALID. STOP. Just output empty JSON template: {\"agent_response\": \"Error...\", \"products\": []}"
+                        )
+                        if response.candidates:
+                            retry_text = response.candidates[0].content.parts[0].text
+                            retry_json = extract_json(retry_text)
+                            if is_valid_json(retry_json):
+                                return AgentResponse(retry_json, chat.history)
+
+                        # Logic failed -> Hard Fallback
+                        print("❌ JSON Repair Failed. Returning Hard Fallback.")
                         fallback_json = json.dumps({
-                            "agent_response": clean_text.replace('"', "'"),
+                            "agent_response": combined_text.replace('"', "'")[:800],
                             "products": [],
                             "predictive_insight": "System Note: Response layout might be imperfect."
                         })
