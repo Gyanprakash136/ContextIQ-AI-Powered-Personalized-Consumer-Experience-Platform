@@ -342,14 +342,17 @@ class Agent:
             print(f"⚠️ Triggering Fallback Tier 1 (LLM) for: {user_input}")
             prompt = (
                 f"User asked: '{user_input}'\n"
-                "External tools (Search) are unavailable.\n"
-                "Task: List 3 specific, popular, real-world product models that answer the request.\n"
-                "Return JSON ONLY: [{'name': 'Model Name', 'price': 'Approx Price'}, ...]"
+                "External tools unavailable.\n"
+                "Task: List 3 real, popular product models relevant to this request.\n"
+                "Format: JSON Array ONLY. Example: [{'name': 'MacBook Air M2', 'price': '₹99,000'}, {'name': 'Dell XPS 13', 'price': '₹1,20,000'}]\n"
+                "Do NOT include markdown backticks."
             )
             resp = self.model.generate_content(prompt)
             if resp.candidates:
                 text = resp.candidates[0].content.parts[0].text
-                data = json.loads(extract_json(text))
+                # Clean potential markdown just in case
+                text = text.replace("```json", "").replace("```", "").strip()
+                data = json.loads(text)
                 
                 if isinstance(data, list) and len(data) > 0:
                     products = []
@@ -376,27 +379,32 @@ class Agent:
             print(f"❌ Fallback Tier 1 Failed: {e}")
 
         # Tier 2: Hardcoded Backup (If LLM fails)
-        # We give at least SOMETHING clickable and relevant-ish
         print("⚠️ Triggering Fallback Tier 2 (Hardcoded)")
+        
+        # Simple cleanup of query for display
+        display_query = user_input
+        if len(display_query) > 20: 
+            display_query = display_query[:20] + "..."
+            
         payload = {
-            "agent_response": f"I'm having trouble connecting to my tools and my internal database. However, you can check these general categories or use the direct link:",
+            "agent_response": f"I'm having trouble connecting to my tools. You can view matches directly on Amazon:",
             "products": [
                 {
-                    "name": f"Search Results for '{user_input}'",
+                    "name": f"View Matches for '{display_query}'",
                     "price": "See Listings",
                     "link": fallback_link,
                     "image_url": "https://placehold.co/300x300?text=Search+Results",
                     "reason": "Direct Search Link"
                 },
                 {
-                    "name": "Bestsellers on Amazon",
+                    "name": "View Top Bestsellers",
                     "price": "Various",
                     "link": "https://www.amazon.in/gp/bestsellers",
                     "image_url": "https://placehold.co/300x300?text=Bestsellers",
                     "reason": "Popular Items"
                 }
             ],
-            "predictive_insight": "Please try your request again in a moment detailed search."
+            "predictive_insight": "Please try your request again in a moment."
         }
         if error: payload["_debug"] = str(error)
         return json.dumps(payload, ensure_ascii=False)
