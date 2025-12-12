@@ -202,6 +202,8 @@ class Agent:
                 print(f"❌ Unrecoverable Error or Retries Exhausted: {err}")
                 raise
 
+        raise Exception(f"Max retries ({retries}) exceeded without success.")
+
     def _rotate_api_key(self) -> bool:
         """
         Rotates to the next available API key in GOOGLE_API_KEYS.
