@@ -107,6 +107,14 @@ class Agent:
 
         if not os.getenv("GOOGLE_API_KEY"):
             print("WARNING: GOOGLE_API_KEY not set in environment variables")
+        else:
+            # Force sanitation of the environment variable (remove newlines/spaces)
+            raw_key = os.getenv("GOOGLE_API_KEY", "")
+            clean_key = raw_key.strip()
+            if raw_key != clean_key:
+                print(f"⚠️ Trimming whitespace/newline from GOOGLE_API_KEY (len: {len(raw_key)} -> {len(clean_key)})")
+                os.environ["GOOGLE_API_KEY"] = clean_key
+                genai.configure(api_key=clean_key) # Re-configure to be safe
 
         safety = {
             "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
