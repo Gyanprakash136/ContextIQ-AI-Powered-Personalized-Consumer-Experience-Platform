@@ -128,11 +128,62 @@ class Agent:
                 return chat.send_message(content)
             except Exception as e:
                 err = str(e)
-                if ("429" in err or "ResourceExhausted" in err or "Quota" in err) and attempt < retries:
-                    wait_time = (attempt + 1) * 5 * backoff_base
-                    time.sleep(wait_time)
-                    continue
+                # Check for Quota or Rate Limit errors
+                if ("429" in err or "ResourceExhausted" in err or "Quota" in err):
+                    print(f"⚠️ Quota Warning (Attempt {attempt + 1}): {err}")
+                    
+                    # Try to rotate key first
+                    if self._rotate_api_key():
+                        print("🔄 Switched to next API Key. Retrying immediately...")
+                        time.sleep(1) # Brief pause for config propagation
+                        continue
+                    
+                    # If rotation failed (no more keys) or single key, use backoff
+                    if attempt < retries:
+                        wait_time = (attempt + 1) * 5 * backoff_base
+                        print(f"⏳ Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                        continue
                 raise
+
+    def _rotate_api_key(self) -> bool:
+        """
+        Rotates to the next available API key in GOOGLE_API_KEYS.
+        Returns True if successful, False if no other keys available.
+        """
+        api_keys_str = os.getenv("GOOGLE_API_KEYS")
+        if not api_keys_str:
+            return False
+            
+        keys = [k.strip() for k in api_keys_str.split(",") if k.strip()]
+        if len(keys) < 2:
+            return False
+            
+        # Get current key (heuristic: check configured key if possible, or just cycle)
+        # Since we can't easily peek at current configured key, we'll maintain state in the Agent if possible
+        # But Agent is transient request-scoped in some designs. 
+        # Better approach: Try next key in list that isn't the current environment var GOOGLE_API_KEY
+        
+        current_key = os.getenv("GOOGLE_API_KEY")
+        
+        try:
+            next_index = (keys.index(current_key) + 1) % len(keys)
+        except ValueError:
+            next_index = 0
+            
+        new_key = keys[next_index]
+        if new_key == current_key and len(keys) > 1:
+             # Just to be safe, if we wrapped around to same key but have others?
+             # Logic above (index + 1) % len handles it correctly.
+             # but if current_key wasn't in list, we picked 0.
+             pass
+
+        print(f"🔑 Rotating API Key: ...{current_key[-4:] if current_key else 'None'} -> ...{new_key[-4:]}")
+        
+        # Update Environment and GenAI Config
+        os.environ["GOOGLE_API_KEY"] = new_key
+        genai.configure(api_key=new_key)
+        return True
 
     def _extract_text_from_input(self, user_input: Any) -> str:
         """Helper to safely extract string text from potentially multimodal input."""

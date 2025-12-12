@@ -55,6 +55,36 @@ class TestAgentLogic(unittest.TestCase):
         extracted_multi = self.agent._extract_text_from_input(input_list_multi)
         self.assertEqual(extracted_multi, "Part 1  Part 2")
 
+    @patch.dict(os.environ, {"GOOGLE_API_KEYS": "key1,key2", "GOOGLE_API_KEY": "key1"})
+    @patch('backend.core.shim.genai.configure')
+    def test_api_key_rotation(self, mock_configure):
+        """Test if Agent rotates keys on 429/Quota error."""
+        # Setup Agent with rotation capability (simulated by environment)
+        self.agent._rotate_api_key = MagicMock(wraps=self.agent._rotate_api_key)
+        
+        # Mock chat.send_message to fail, then retry (succeed for PLAN), then call SYNTHESIZE
+        mock_chat = MagicMock()
+        mock_error = Exception("429 Quota Exceeded")
+        mock_success_plan = MagicMock()
+        mock_success_plan.candidates = [MagicMock(content=MagicMock(parts=[MagicMock(text='SKIP_SEARCH')]))]
+        mock_success_synth = MagicMock()
+        mock_success_synth.candidates = [MagicMock(content=MagicMock(parts=[MagicMock(text='{"agent_response": "ok", "products": []}')]))]
+        
+        # Sequence: 
+        # 1. PLAN -> Fail (Quota)
+        # 2. PLAN (Retry with new key) -> Success
+        # 3. SYNTHESIZE -> Success
+        mock_chat.send_message.side_effect = [mock_error, mock_success_plan, mock_success_synth]
+        self.agent.model.start_chat.return_value = mock_chat
+        
+        # Run agent (which triggers _send_message_with_retry)
+        self.agent.run("hello")
+        
+        # Verify rotation was called
+        self.assertTrue(self.agent._rotate_api_key.called)
+        # Verify genai.configure was called with new key
+        mock_configure.assert_called_with(api_key="key2")
+
     def test_pure_llm_response_structure(self):
         """Verify the agent processes LLM JSON output correctly without tools."""
         # Mock Chat Session
