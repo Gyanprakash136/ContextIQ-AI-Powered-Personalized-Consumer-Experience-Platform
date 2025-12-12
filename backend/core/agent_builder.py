@@ -1,21 +1,16 @@
-from core.shim import Agent
-from core.prompts import AGENT_INSTRUCTION
-# Deployment Fix: Forced Cache Bust [Timestamp Verified]
+from backend.core.shim import Agent
+from backend.core.prompts import AGENT_INSTRUCTION
 
-def get_tool_list():
-    return []
-
-def build_contextiq_agent():
-    print(" Building ContextIQ Agent...")
-    
-    tools = get_tool_list()
-    print(f" Loaded Tools: {[t.__name__ for t in tools]}")
-    # Initialize Agent
-    agent = Agent(
-        model="gemini-2.0-flash-exp",
-        name="ContextIQ_Assistant",
-        instruction=AGENT_INSTRUCTION,
-        tools=tools
+def build_fast_agent():
+    return Agent(
+        model="gemini-1.5-flash",
+        name="ContextIQ_Speed",
+        instruction="You are a helpful assistant. Keep responses short, friendly, and natural. Do not generate JSON."
     )
-    
-    return agent
+
+def build_heavy_agent():
+    return Agent(
+        model="gemini-1.5-pro", # Use Pro for reasoning
+        name="ContextIQ_Brain",
+        instruction=AGENT_INSTRUCTION
+    )
