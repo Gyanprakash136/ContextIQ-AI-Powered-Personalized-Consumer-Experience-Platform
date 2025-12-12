@@ -106,6 +106,7 @@ class Agent:
                 self.tool_map[tool.__name__] = tool
 
         # 1. Parsing & Sanitation of API Keys
+        current_key = os.getenv("GOOGLE_API_KEY")
         raw_single_key = os.getenv("GOOGLE_API_KEY", "").strip()
         raw_multi_keys = os.getenv("GOOGLE_API_KEYS", "").strip()
 
@@ -155,19 +156,26 @@ class Agent:
         )
 
     def _send_message_with_retry(self, chat, content, retries: int = 3, backoff_base: int = 2):
-        for attempt in range(retries + 1):
+        attempt = 0
+        while attempt <= retries:
             try:
                 return chat.send_message(content)
             except Exception as e:
                 err = str(e)
                 # Check for Quota or Rate Limit errors
                 if ("429" in err or "ResourceExhausted" in err or "Quota" in err):
-                    print(f"⚠️ Quota Warning (Attempt {attempt + 1}): {err}")
+                    print(f"⚠️ Quota Warning (Attempt {attempt + 1}/{retries + 1}): {err}")
                     
                     # Try to rotate key first
                     if self._rotate_api_key():
                         print("🔄 Switched to next API Key. Retrying immediately...")
                         time.sleep(1) # Brief pause for config propagation
+                        
+                        # Increment attempt to prevent infinite loops, but consider increasing default retries if needed
+                        attempt += 1
+                        if attempt > retries:
+                             print("❌ Max retries reached even after rotation.")
+                             raise
                         continue
                     
                     # If rotation failed (no more keys) or single key, use backoff
@@ -175,7 +183,10 @@ class Agent:
                         wait_time = (attempt + 1) * 5 * backoff_base
                         print(f"⏳ Waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
+                        attempt += 1
                         continue
+                
+                # If we get here: either not a quota error, or we ran out of retries/rotations
                 raise
 
     def _rotate_api_key(self) -> bool:
@@ -196,6 +207,9 @@ class Agent:
         # But Agent is transient request-scoped in some designs. 
         # Better approach: Try next key in list that isn't the current environment var GOOGLE_API_KEY
         
+        # Better approach: Try next key in list that isn't the current environment var GOOGLE_API_KEY
+        
+        current_key = os.getenv("GOOGLE_API_KEY")
         clean_current_key = "None"
         try:
             # Robustly handle current_key if it contained extra chars
