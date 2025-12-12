@@ -170,7 +170,7 @@ class Agent:
                 "STATE=PLAN\n"
                 "Analyze the user's request.\n"
                 "1. If it is a Product Search (e.g., 'buy laptop', 'best shoes'), rewrite it into a concise marketplace query.\n"
-                "2. If it is General Conversation (e.g., 'Hi', 'Who are you', 'how are you'), respond EXACTLY with: SKIP_SEARCH\n"
+                "2. If it is General Conversation OR Complaint (e.g., 'Hi', 'Why did you fail?', 'This is bad'), respond EXACTLY with: SKIP_SEARCH\n"
                 "Respond with the single-line query OR 'SKIP_SEARCH' only. Do NOT call tools.\n\n"
                 f"User request: {user_text_query}"
             )

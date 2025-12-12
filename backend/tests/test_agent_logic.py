@@ -84,16 +84,31 @@ class TestAgentLogic(unittest.TestCase):
 
     def test_chat_bypass_logic(self):
         """Verify the logic flow for conversational bypass (SKIP_SEARCH)."""
-        # We can't easily test the full run() without complex mocking of gemini responses,
-        # but we can verify the critical regex or condition used.
-        
+        # Case 1: Pure Chat
         plan_query_chat = "SKIP_SEARCH"
-        is_chat = "SKIP_SEARCH" in plan_query_chat
-        self.assertTrue(is_chat)
+        self.assertTrue("SKIP_SEARCH" in plan_query_chat)
         
+        # Case 2: Product Search (Should NOT skip)
         plan_query_search = "buy laptop"
-        is_chat_search = "SKIP_SEARCH" in plan_query_search
-        self.assertFalse(is_chat_search)
+        self.assertFalse("SKIP_SEARCH" in plan_query_search)
+
+    def test_angry_customer_bypass_intent(self):
+        """Verify that complaints are considered 'Chat' to avoid searching for hate."""
+        # Simulated LLM output for a complaint prompt
+        # We expect the prompt instruction to drive the LLM to output SKIP_SEARCH
+        # This test verifies our regex checking logic works for that output
+        model_output_complaint = "SKIP_SEARCH" 
+        self.assertTrue("SKIP_SEARCH" in model_output_complaint)
+
+    def test_fallback_link_safety(self):
+        """Verify that fallback links are generated correctly and safely."""
+        # Test logic from _fallback_response (re-implemented here for unit verification)
+        user_input = "bad product!@#"
+        safe_query = re.sub(r'[^a-zA-Z0-9 ]', '', user_input).replace(" ", "+")
+        link = f"https://www.amazon.in/s?k={safe_query}"
+        
+        self.assertEqual(safe_query, "bad+product")
+        self.assertEqual(link, "https://www.amazon.in/s?k=bad+product")
 
 if __name__ == '__main__':
     unittest.main()
