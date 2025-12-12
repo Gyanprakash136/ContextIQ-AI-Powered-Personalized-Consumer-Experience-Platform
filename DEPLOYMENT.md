@@ -15,6 +15,14 @@ This is like Vercel/Heroku. You don't manage servers.
     - **HTTP Port**: Set to `8000`.
 6.  Click **Launch**.
 
+---
+
+### Configuration (Environment Variables)
+**IMPORTANT**: The application now supports API Key Rotation to handle rate limits.
+- `GOOGLE_API_KEYS`: A comma-separated string of your API keys.
+  - Example: `AIzaSy...Key1,AIzaSy...Key2,AIzaSy...Key3`
+- `GOOGLE_API_KEY`: (Optional) The initial key to start with. If ommitted, the first key from the list is used implicitly by rotation logic.
+
 ### B. Droplet (Virtual Server - Cheaper)
 Similar to EC2 but with a simpler UI. Starts at ~$4/mo.
 1.  Create a **Droplet** (Ubuntu 22.04).
