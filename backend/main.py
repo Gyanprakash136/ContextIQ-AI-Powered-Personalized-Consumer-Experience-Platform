@@ -36,7 +36,13 @@ async def chat_endpoint(
     # 1. Manage Session
     if not session_id or session_id == "undefined":
         session_id = session_manager.create_session(user_id)
+        
     session_data = session_manager.load_session(session_id)
+    if not session_data:
+        # Create new session if invalid ID provided
+        session_id = session_manager.create_session(user_id)
+        session_data = session_manager.load_session(session_id)
+        
     history = session_data["history"]
 
     # 2. Route Intent
