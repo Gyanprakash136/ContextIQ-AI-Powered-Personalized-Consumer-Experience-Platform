@@ -31,7 +31,7 @@ class Agent:
             print("WARNING: GOOGLE_API_KEY not set in environment variables")
 
         safety = {
-            "HARM_CATEGORY_HARASSUREMENT": "BLOCK_NONE",
+            "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
             "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
             "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
             "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE"
