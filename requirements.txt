@@ -15,3 +15,4 @@ firebase-admin>=6.2.0
 gunicorn
 curl_cffi>=0.5.10
 # Deployment Fix: Force Re-install libraries (Timestamp: 2025-12-12)
+duckduckgo-search>=5.0.0
