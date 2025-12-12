@@ -314,31 +314,64 @@ class Agent:
 
     def _fallback_response(self, user_input: str, error: Optional[str] = None) -> str:
         """
-        Deterministic fallback that never calls external tools.
+        Smart Fallback:
+        1. Try to generate relevant products using LLM internal knowledge (Blind Mode).
+        2. If that fails, revert to a safe generic search link.
         """
-        fallback_catalog = [
-            {"name": "boAt Airdopes 141", "price": "₹1,499"},
-            {"name": "realme Buds T100", "price": "₹2,499"},
-            {"name": "JBL Tune 215TWS", "price": "₹2,999"}
-        ]
+        try:
+            # 1. Ask LLM for known products
+            prompt = (
+                f"User asked: '{user_input}'\n"
+                "External tools (Search) are unavailable.\n"
+                "Task: List 3 specific, popular, real-world product models that answer the request.\n"
+                "Return JSON ONLY: [{'name': 'Model Name', 'price': 'Approx Price'}, ...]"
+            )
+            # Use a fresh chat session for this simple query to avoid pollution
+            resp = self.model.generate_content(prompt)
+            text = resp.candidates[0].content.parts[0].text if resp.candidates else ""
+            data = json.loads(extract_json(text))
+            
+            if isinstance(data, list) and len(data) > 0:
+                products = []
+                for item in data:
+                    name = item.get("name", "Generic Product")
+                    price = item.get("price", "Check Price")
+                    # Construct safe safe link
+                    safe_link = f"https://www.amazon.in/s?k={name.replace(' ', '+')}"
+                    products.append({
+                        "name": name,
+                        "price": price,
+                        "link": safe_link,
+                        "image_url": "https://placehold.co/300x300?text=Product+Image",
+                        "reason": "Popular choice (Internal Knowledge)"
+                    })
+                
+                payload = {
+                    "agent_response": "I couldn't access live search results right now, but here are some popular top-rated options based on general knowledge:",
+                    "products": products,
+                    "predictive_insight": "You might want to check current availability as these are popular models."
+                }
+                if error: payload["_debug"] = str(error)
+                return json.dumps(payload, ensure_ascii=False)
+
+        except Exception as e:
+            print(f"Fallback Generation Failed: {e}")
         
-        # Format links to safe search
-        products = []
-        for item in fallback_catalog:
-             products.append({
-                 "name": item["name"],
-                 "price": item["price"],
-                 "link": f"https://www.amazon.in/s?k={item['name'].replace(' ', '+')}",
-                 "image_url": "https://placehold.co/300x300?text=Best+Seller",
-                 "reason": "Top seller fallback"
-             })
-
+        # 2. Ultimate Safety Net (If LLM generation fails)
+        # Just give a generic search link for the user's query
+        safe_query = re.sub(r'[^a-zA-Z0-9 ]', '', user_input).replace(" ", "+")
+        fallback_link = f"https://www.amazon.in/s?k={safe_query}"
+        
         payload = {
-            "agent_response": "I'm having trouble connecting to live stores right now, but here are some reliable top-sellers you can check out on Amazon:",
-            "products": products,
-            "predictive_insight": "Since you're looking for audio, check out protective cases too."
+            "agent_response": f"I'm having trouble connecting to my tools. You can view results directly on Amazon here:",
+            "products": [{
+                "name": f"Search results for '{user_input}'",
+                "price": "See Listings",
+                "link": fallback_link,
+                "image_url": "https://placehold.co/300x300?text=Search+Results",
+                "reason": "Manual Search Link"
+            }],
+            "predictive_insight": "Please try your request again in a moment."
         }
-        if error:
-            payload["_debug"] = str(error)
-
+        if error: payload["_debug"] = str(error)
         return json.dumps(payload, ensure_ascii=False)
