@@ -83,10 +83,9 @@ Your query MUST include:
 - Category
 - Price limit
 - Brand (if given)
-- “site:amazon.in OR site:flipkart.com OR site:myntra.com”
 
 Example:
-"Nike basketball shoes size 9 under 5000 INR site:amazon.in OR site:flipkart.com"
+"Nike basketball shoes size 9 under 5000 INR"
 
 ### scrape_url(url)
 Use IMMEDIATELY after finding a product link.
