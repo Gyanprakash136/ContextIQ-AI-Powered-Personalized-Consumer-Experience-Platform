@@ -151,7 +151,7 @@ def chat_endpoint(
 
     # Run Agent
     try:
-        response = agent.run(input=input_parts, chat_history=history)
+        response = agent.run(user_input=input_parts, chat_history=history)
         
         # Save updated history
         session_manager.save_session(session_id, response.chat_history)
