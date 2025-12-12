@@ -105,16 +105,40 @@ class Agent:
             if callable(tool):
                 self.tool_map[tool.__name__] = tool
 
-        if not os.getenv("GOOGLE_API_KEY"):
-            print("WARNING: GOOGLE_API_KEY not set in environment variables")
+        # 1. Parsing & Sanitation of API Keys
+        raw_single_key = os.getenv("GOOGLE_API_KEY", "").strip()
+        raw_multi_keys = os.getenv("GOOGLE_API_KEYS", "").strip()
+
+        # Handle case where user put list in GOOGLE_API_KEY
+        if "," in raw_single_key:
+            print("⚠️ 'GOOGLE_API_KEY' contains commas. Assuming it's a list. Using first key.")
+            parts = [k.strip() for k in raw_single_key.split(",") if k.strip()]
+            if parts:
+                raw_single_key = parts[0]
+                # If plural var is empty, backfill it for rotation logic
+                if not raw_multi_keys:
+                    os.environ["GOOGLE_API_KEYS"] = ",".join(parts)
+        
+        # Aggressive strip of quotes and whitespace
+        clean_key = raw_single_key.strip().strip("'").strip('"')
+        
+        if not clean_key:
+             # Fallback: check if we have a list to pull from
+             if raw_multi_keys:
+                 parts = [k.strip() for k in raw_multi_keys.split(",") if k.strip()]
+                 if parts:
+                     clean_key = parts[0]
+                     print(f"⚠️ 'GOOGLE_API_KEY' was empty, using first key from 'GOOGLE_API_KEYS': ...{clean_key[-4:]}")
+
+        if not clean_key:
+            print("WARNING: Could not find a valid GOOGLE_API_KEY.")
         else:
-            # Force sanitation of the environment variable (remove newlines/spaces)
-            raw_key = os.getenv("GOOGLE_API_KEY", "")
-            clean_key = raw_key.strip()
-            if raw_key != clean_key:
-                print(f"⚠️ Trimming whitespace/newline from GOOGLE_API_KEY (len: {len(raw_key)} -> {len(clean_key)})")
-                os.environ["GOOGLE_API_KEY"] = clean_key
-                genai.configure(api_key=clean_key) # Re-configure to be safe
+            if raw_single_key != clean_key:
+                 print(f"⚠️ Sanitized API Key (removed whitespace/quotes). Using: ...{clean_key[-4:]}")
+            
+            # CRITICAL: Update env var so libraries using os.getenv get the clean key
+            os.environ["GOOGLE_API_KEY"] = clean_key
+            genai.configure(api_key=clean_key)
 
         safety = {
             "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
@@ -172,21 +196,26 @@ class Agent:
         # But Agent is transient request-scoped in some designs. 
         # Better approach: Try next key in list that isn't the current environment var GOOGLE_API_KEY
         
-        current_key = os.getenv("GOOGLE_API_KEY")
-        
         try:
-            next_index = (keys.index(current_key) + 1) % len(keys)
-        except ValueError:
-            next_index = 0
+            # Robustly handle current_key if it contained extra chars
+            clean_current_key = current_key.strip().strip("'").strip('"')
+            
+            # Find index of current key in clean list
+            try:
+                current_index = keys.index(clean_current_key)
+                next_index = (current_index + 1) % len(keys)
+            except ValueError:
+                # If current key not in list (weird state), start from 0
+                next_index = 0
+        except Exception:
+             next_index = 0
             
         new_key = keys[next_index]
-        if new_key == current_key and len(keys) > 1:
-             # Just to be safe, if we wrapped around to same key but have others?
-             # Logic above (index + 1) % len handles it correctly.
-             # but if current_key wasn't in list, we picked 0.
-             pass
+        
+        # Triple-check sanitation of new key
+        new_key = new_key.strip().strip("'").strip('"')
 
-        print(f"🔑 Rotating API Key: ...{current_key[-4:] if current_key else 'None'} -> ...{new_key[-4:]}")
+        print(f"🔑 Rotating API Key: ...{clean_current_key[-4:] if clean_current_key else 'None'} -> ...{new_key[-4:]}")
         
         # Update Environment and GenAI Config
         os.environ["GOOGLE_API_KEY"] = new_key
