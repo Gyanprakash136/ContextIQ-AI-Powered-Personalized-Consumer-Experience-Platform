@@ -1,5 +1,5 @@
-from backend.core.shim import Agent
-from backend.core.prompts import AGENT_INSTRUCTION
+from core.shim import Agent
+from core.prompts import AGENT_INSTRUCTION
 
 def build_fast_agent():
     return Agent(

@@ -4,8 +4,8 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 import google.generativeai as genai
-from backend.tools.search_tool import search_web
-from backend.tools.scraper import scrape_url
+from tools.search_tool import search_web
+from tools.scraper import scrape_url
 
 class AgentResponse:
     def __init__(self, output: str, chat_history: List[Dict[str, Any]]):
