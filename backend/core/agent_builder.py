@@ -1,13 +1,9 @@
+```python
 from core.shim import Agent
-from tools.predictor import generate_future_insight
-from tools.scraper import scrape_url
 from core.prompts import AGENT_INSTRUCTION
-from tools.deprecated_tool import search_internal_catalog
-
-from tools.search_tool import search_web
 
 def get_tool_list():
-    return [scrape_url, generate_future_insight, search_web, search_internal_catalog]
+    return []
 
 def build_contextiq_agent():
     print(" Building ContextIQ Agent...")
@@ -19,7 +15,7 @@ def build_contextiq_agent():
         model="gemini-1.5-flash",
         name="ContextIQ_Assistant",
         instruction=AGENT_INSTRUCTION,
-        tools=get_tool_list() 
+        tools=tools
     )
     
     return agent

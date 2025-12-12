@@ -13,7 +13,7 @@ from typing import List, Optional, Union
 from PIL import Image
 import io
 import re
-from tools.scraper import scrape_url, fetch_meta_image
+
 
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -108,28 +108,18 @@ def chat_endpoint(
     if message:
         text_prompt += f"User Message: {message}\n"
         
-        # Automatic Link Extraction and Scraping
+        # Automatic Link Extraction (Scraping Removed - Pure LLM Mode)
         urls = re.findall(r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*', message)
         if urls:
             print(f"🔗 Detected URLs: {urls}")
-            text_prompt += "\n--- SCRAPED CONTENT ---\n"
+            text_prompt += "\n--- DETECTED LINKS ---\n"
             for url in urls:
-                try:
-                    text_prompt += f"\nSOURCE: {url}\n"
-                    scraped_content = scrape_url(url)
-                    text_prompt += f"CONTENT:\n{scraped_content}\n"
-                except Exception as e:
-                    text_prompt += f"Error scraping {url}: {e}\n"
-            text_prompt += "\n--- END SCRAPED CONTENT ---\n"
+                text_prompt += f"\nURL: {url}\n"
+            text_prompt += "\n--- END DETECTED LINKS ---\n"
 
     # Deprecated: context_link (keeping for backward compatibility but optional)
     if context_link:
-        text_prompt += f"\n--- EXPLICIT CONTEXT LINK ---\nSource: {context_link}\n"
-        try:
-             scraped_content = scrape_url(context_link)
-             text_prompt += f"{scraped_content}\n"
-        except Exception as e:
-             text_prompt += f"Error reading link: {e}\n"
+         text_prompt += f"\n--- EXPLICIT CONTEXT LINK ---\nSource: {context_link}\n"
 
     if text_prompt:
         input_parts.append(text_prompt)
@@ -195,13 +185,8 @@ def chat_endpoint(
                 for product in final_response["products"]:
                     if isinstance(product, dict) and product.get("link"):
                         if not product.get("image") or product.get("image") == "No Image":
-                            print(f"🖼 Fetching image for {product['link']}...")
-                            img_url = fetch_meta_image(product['link'])
-                            if img_url:
-                                product["image"] = img_url
-                                print(f"✅ Found image: {img_url}")
-                            else:
-                                print(f"❌ No image found for {product['link']}")
+                            # In pure LLM mode, we rely on the LLM or frontend/db for images.
+                            pass
             else:
                  final_response["products"] = []
         

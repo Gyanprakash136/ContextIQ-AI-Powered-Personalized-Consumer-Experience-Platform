@@ -13,24 +13,17 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')
 sys.modules["google"] = MagicMock()
 sys.modules["google.generativeai"] = MagicMock()
 sys.modules["google.generativeai.types"] = MagicMock()
-sys.modules["googlesearch"] = MagicMock()
 
-from backend.core.shim import Agent, extract_json
-from backend.tools.search_tool import search_web
+# Import Agent
+from backend.core.shim import Agent
 
 class TestAgentLogic(unittest.TestCase):
     
     def setUp(self):
-        # Mock tools and model
         self.mock_model = MagicMock()
-        self.mock_tools = []
         # Instantiate agent with dummy data
-        self.agent = Agent(model="gemini-test", name="TestAgent", instruction="Test", tools=self.mock_tools)
-        # Mock the model property in the agent since __init__ creates a real one
+        self.agent = Agent(model="gemini-1.5-flash", name="TestAgent", instruction="Test", tools=[])
         self.agent.model = self.mock_model
-        
-        # Suppress prints during test
-        self.capturedOutput = []
 
     def test_input_sanitization_regex(self):
         """Test if 'User Message:' prefix is stripped correctly."""
@@ -62,53 +55,44 @@ class TestAgentLogic(unittest.TestCase):
         extracted_multi = self.agent._extract_text_from_input(input_list_multi)
         self.assertEqual(extracted_multi, "Part 1  Part 2")
 
-    @patch('backend.tools.search_tool.search')
-    def test_google_search_tool(self, mock_search):
-        """Test search_web wrapper around google search."""
-        # Mock return from googlesearch
-        mock_result = MagicMock()
-        mock_result.title = "Test Title"
-        mock_result.url = "http://example.com"
-        mock_result.description = "Test Snippet"
-        
-        mock_search.return_value = [mock_result]
-        
-        output = search_web("test query")
-        self.assertIn("Link: http://example.com", output)
-        self.assertIn("Title: Test Title", output)
-        
-        # Verify fallback logic (advanced=False) if advanced fails
-        mock_search.side_effect = [Exception("Advanced failed"), ["http://fallback.com"]]
-        output_fallback = search_web("test query")
-        self.assertIn("Link: http://fallback.com", output_fallback)
+    def test_pure_llm_response_structure(self):
+        """Verify the agent processes LLM JSON output correctly without tools."""
+        # Mock Chat Session
+        mock_chat = MagicMock()
+        self.mock_model.start_chat.return_value = mock_chat
 
-    def test_chat_bypass_logic(self):
-        """Verify the logic flow for conversational bypass (SKIP_SEARCH)."""
-        # Case 1: Pure Chat
-        plan_query_chat = "SKIP_SEARCH"
-        self.assertTrue("SKIP_SEARCH" in plan_query_chat)
+        # Mock Responses for PLAN and SYNTHESIZE steps
         
-        # Case 2: Product Search (Should NOT skip)
-        plan_query_search = "buy laptop"
-        self.assertFalse("SKIP_SEARCH" in plan_query_search)
+        # 1. PLAN Response
+        mock_plan_resp = MagicMock()
+        mock_plan_part = MagicMock()
+        mock_plan_part.text = "SKIP_SEARCH"
+        mock_plan_resp.candidates = [MagicMock(content=MagicMock(parts=[mock_plan_part]))]
 
-    def test_angry_customer_bypass_intent(self):
-        """Verify that complaints are considered 'Chat' to avoid searching for hate."""
-        # Simulated LLM output for a complaint prompt
-        # We expect the prompt instruction to drive the LLM to output SKIP_SEARCH
-        # This test verifies our regex checking logic works for that output
-        model_output_complaint = "SKIP_SEARCH" 
-        self.assertTrue("SKIP_SEARCH" in model_output_complaint)
+        # 2. SYNTHESIZE Response (JSON)
+        mock_synth_resp = MagicMock()
+        mock_synth_part = MagicMock()
+        # Simulated JSON output
+        json_content = json.dumps({
+            "agent_response": "Here are some recommendations.",
+            "products": [{"name": "Test Product", "price": "$100", "link": "http://test.com"}],
+            "predictive_insight": "Good choice."
+        })
+        mock_synth_part.text = json_content
+        mock_synth_resp.candidates = [MagicMock(content=MagicMock(parts=[mock_synth_part]))]
 
-    def test_fallback_link_safety(self):
-        """Verify that fallback links are generated correctly and safely."""
-        # Test logic from _fallback_response (re-implemented here for unit verification)
-        user_input = "bad product!@#"
-        safe_query = re.sub(r'[^a-zA-Z0-9 ]', '', user_input).replace(" ", "+")
-        link = f"https://www.amazon.in/s?k={safe_query}"
+        # Set side_effect for chat.send_message (called twice)
+        mock_chat.send_message.side_effect = [mock_plan_resp, mock_synth_resp]
         
-        self.assertEqual(safe_query, "bad+product")
-        self.assertEqual(link, "https://www.amazon.in/s?k=bad+product")
+        # Run agent
+        response = self.agent.run("show me laptops")
+        
+        # Verify response structure
+        self.assertIsInstance(response.output, str)
+        parsed = json.loads(response.output)
+        self.assertEqual(parsed["agent_response"], "Here are some recommendations.")
+        self.assertEqual(len(parsed["products"]), 1)
+        self.assertEqual(parsed["products"][0]["name"], "Test Product")
 
 if __name__ == '__main__':
     unittest.main()

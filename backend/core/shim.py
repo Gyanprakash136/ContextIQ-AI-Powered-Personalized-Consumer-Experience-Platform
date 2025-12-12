@@ -172,7 +172,7 @@ class Agent:
                 "1. If it is a Product Search (e.g., 'buy laptop', 'best shoes'), rewrite it into a concise marketplace query.\n"
                 "2. If it is General Conversation OR Complaint (e.g., 'Hi', 'Why did you fail?', 'This is bad'), respond EXACTLY with: SKIP_SEARCH\n"
                 "Respond with the single-line query OR 'SKIP_SEARCH' only. Do NOT call tools.\n\n"
-                f"User request: {user_text_query}"
+                f"User request: {user_text_query}\n"
             )
             print("🔄 State: PLAN")
             plan_resp = self._send_message_with_retry(chat, plan_prompt)
@@ -185,226 +185,34 @@ class Agent:
             print(f"   Query: {plan_query} (Skip: {skip_search})")
 
             # ---------------------------------------------------------
-            # STATE 2: SEARCH (Tool Execution)
+            # STATE 2: SYNTHESIZE (LLM generates response based on chat history and optional products)
             # ---------------------------------------------------------
-            search_results = []
-            if not skip_search:
-                print("🔄 State: SEARCH")
-                search_attempts = 0
-                while search_attempts < 2 and not search_results:
-                    search_attempts += 1
-                    if "search_web" in self.tool_map:
-                        try:
-                            tool_response = self.tool_map["search_web"](plan_query)
-                            if isinstance(tool_response, dict) and tool_response.get("status") == "ok":
-                                results = tool_response.get("results", [])
-                                if isinstance(results, list):
-                                    for item in results:
-                                        link = item.get("link")
-                                        if link:
-                                            self.valid_urls.add(link)
-                                    search_results = results
-                                    break
-                            plan_query = plan_query.replace("site:amazon.in OR site:flipkart.com OR site:myntra.com", "")
-                        except Exception:
-                            consecutive_failures += 1
-                            time.sleep(1.0)
-                    else:
-                        break
-
-                if not search_results:
-                    # If search was attempted but failed, we trigger fallback.
-                    # If we skipped search, we just proceed.
-                    print("⚠️ Search failed. Triggering Fallback.")
-                    return AgentResponse(self._fallback_response(user_text_query), chat.history)
-
-            # ---------------------------------------------------------
-            # STATE 3: SCRAPE (Tool Execution)
-            # ---------------------------------------------------------
-            scraped_products = []
-            if not skip_search and search_results:
-                print("🔄 State: SCRAPE")
-                scrape_candidates = [r.get("link") for r in search_results if r.get("link")]
-                scrape_candidates = scrape_candidates[:4] # Limit to 4 scrapes for speed
-
-                for url in scrape_candidates:
-                    if url not in self.valid_urls: continue
-                    if "scrape_url" not in self.tool_map: continue
-                    
-                    try:
-                        print(f"   Scraping: {url}...")
-                        resp = self.tool_map["scrape_url"](url)
-                        if isinstance(resp, dict) and resp.get("status") == "ok":
-                            prod = resp.get("product")
-                            if prod and prod.get("name") and prod.get("price"):
-                                scraped_products.append(prod)
-                    except Exception:
-                        pass
-                
-                if len(scraped_products) < 1:
-                    print("⚠️ Scrape failed (no valid products). Triggering Fallback.")
-                    return AgentResponse(self._fallback_response(user_text_query), chat.history)
-
-            # ---------------------------------------------------------
-            # STATE 4: EXTRACT & NORMALIZE
-            # ---------------------------------------------------------
-            normalized = []
-            if not skip_search:
-                print("🔄 State: EXTRACT")
-                for p in scraped_products:
-                    try:
-                        name = p.get("name")
-                        price = p.get("price")
-                        image = p.get("image_url") or "https://placehold.co/300x300?text=Product+Image"
-                        link = p.get("link") or ""
-                        
-                        if not name or not price: continue
-                        normalized.append({
-                            "name": name,
-                            "price": price,
-                            "link": link,
-                            "image_url": image,
-                            "reason": p.get("reason", "")
-                        })
-                    except Exception: continue
-
-            # ---------------------------------------------------------
-            # STATE 5: RANK & FILTER
-            # ---------------------------------------------------------
-            final_list = []
-            if not skip_search:
-                print("🔄 State: RANK")
-                def price_to_number(p_str):
-                    try:
-                        s = re.sub(r'[^\d.]', '', str(p_str))
-                        return float(s) if s else float('inf')
-                    except Exception:
-                        return float('inf')
-
-                # Sort by price (Low -> High)
-                normalized.sort(key=lambda x: price_to_number(x.get("price")))
-                
-                # Take top 6 verified items
-                final_list = normalized[:6]
-
-            # ---------------------------------------------------------
-            # STATE 6: SYNTHESIZE (LLM Persona injection)
-            # ---------------------------------------------------------
+            final_list = []  # Empty list; model may generate its own products if desired.
             print("🔄 State: SYNTHESIZE")
-            
             synthesis_prompt = (
                 "STATE=FORMAT\n"
                 f"User Output Logic:\n"
                 f"1. IF products are provided: Recommend them as a friendly Shopkeeper.\n"
-                f"2. IF products are EMPTY (Chat Mode): Respond to the User's message naturally (e.g. greeting, joke, explanation) without inventing products.\n\n"
+                f"2. IF products are EMPTY (Chat Mode): Respond naturally without inventing products.\n"
                 f"User Request: {user_text_query}\n"
                 f"Products Found: {json.dumps(final_list)}\n\n"
                 "TASK: Generate the Final JSON response.\n"
                 "Return ONLY valid JSON with keys: 'agent_response', 'products', 'predictive_insight'."
             )
-            
             final_resp = self._send_message_with_retry(chat, synthesis_prompt)
             final_text = ""
             if final_resp.candidates and final_resp.candidates[0].content.parts:
                 final_text = final_resp.candidates[0].content.parts[0].text
-            
             final_json = extract_json(final_text)
-            
             if is_valid_json(final_json):
                 print("✅ Success.")
                 return AgentResponse(final_json, chat.history)
             else:
-                print("⚠️ JSON Generation failed. Using fallback formatter.")
-                # Fallback to python formatting if LLM JSON fails
-                return AgentResponse(self._fallback_response(user_text_query, "JSON Generation Error"), chat.history)
-
+                print("⚠️ JSON Generation failed. Returning raw LLM output.")
+                return AgentResponse(final_text, chat.history)
         except Exception as e:
             print(f"🔥 Critical Pipeline Error: {e}")
-            fallback = self._fallback_response(user_text_query, error=str(e))
-            return AgentResponse(fallback, chat_history)
+            raise
 
-    def _fallback_response(self, user_input: str, error: Optional[str] = None) -> str:
-        """
-        Smart Fallback System (3-Tier):
-        1. blind_mode: Ask LLM for known products (Best Experience).
-        2. hard_backup: If LLM fails, return generic bestsellers (Good Experience).
-        3. safety_net: Manual Search Link (Worst Case, but safe).
-        """
-        # Ensure user_input is a string
-        if isinstance(user_input, list): 
-             user_input = " ".join([str(p) for p in user_input if isinstance(p, str)])
-        
-        safe_query = re.sub(r'[^a-zA-Z0-9 ]', '', str(user_input)).replace(" ", "+")
-        fallback_link = f"https://www.amazon.in/s?k={safe_query}"
 
-        # Tier 1: Blind Mode (LLM Generation)
-        try:
-            print(f"⚠️ Triggering Fallback Tier 1 (LLM) for: {user_input}")
-            prompt = (
-                f"User asked: '{user_input}'\n"
-                "External tools unavailable.\n"
-                "Task: List 3 real, popular product models relevant to this request.\n"
-                "Format: JSON Array ONLY. Example: [{'name': 'MacBook Air M2', 'price': '₹99,000'}, {'name': 'Dell XPS 13', 'price': '₹1,20,000'}]\n"
-                "Do NOT include markdown backticks."
-            )
-            resp = self.model.generate_content(prompt)
-            if resp.candidates:
-                text = resp.candidates[0].content.parts[0].text
-                # Clean potential markdown just in case
-                text = text.replace("```json", "").replace("```", "").strip()
-                data = json.loads(text)
-                
-                if isinstance(data, list) and len(data) > 0:
-                    products = []
-                    for item in data:
-                        name = item.get("name", "Generic Product")
-                        price = item.get("price", "Check Price")
-                        link = f"https://www.amazon.in/s?k={name.replace(' ', '+')}"
-                        products.append({
-                            "name": name,
-                            "price": price,
-                            "link": link,
-                            "image_url": "https://placehold.co/300x300?text=Product+Image",
-                            "reason": "Popular choice (Internal Knowledge)"
-                        })
-                    
-                    payload = {
-                        "agent_response": "I couldn't access live search results right now, but here are some popular top-rated options based on my knowledge:",
-                        "products": products,
-                        "predictive_insight": "You might want to check current availability as these are popular models."
-                    }
-                    if error: payload["_debug"] = str(error)
-                    return json.dumps(payload, ensure_ascii=False)
-        except Exception as e:
-            print(f"❌ Fallback Tier 1 Failed: {e}")
 
-        # Tier 2: Hardcoded Backup (If LLM fails)
-        print("⚠️ Triggering Fallback Tier 2 (Hardcoded)")
-        
-        # Simple cleanup of query for display
-        display_query = user_input
-        if len(display_query) > 20: 
-            display_query = display_query[:20] + "..."
-            
-        payload = {
-            "agent_response": f"I'm having trouble connecting to my tools. You can view matches directly on Amazon:",
-            "products": [
-                {
-                    "name": f"View Matches for '{display_query}'",
-                    "price": "See Listings",
-                    "link": fallback_link,
-                    "image_url": "https://placehold.co/300x300?text=Search+Results",
-                    "reason": "Direct Search Link"
-                },
-                {
-                    "name": "View Top Bestsellers",
-                    "price": "Various",
-                    "link": "https://www.amazon.in/gp/bestsellers",
-                    "image_url": "https://placehold.co/300x300?text=Bestsellers",
-                    "reason": "Popular Items"
-                }
-            ],
-            "predictive_insight": "Please try your request again in a moment."
-        }
-        if error: payload["_debug"] = str(error)
-        return json.dumps(payload, ensure_ascii=False)

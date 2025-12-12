@@ -9,5 +9,3 @@ firebase-admin
 curl_cffi>=0.5.10
 beautifulsoup4
 pillow
-googlesearch-python>=1.2.0
-chromadb
