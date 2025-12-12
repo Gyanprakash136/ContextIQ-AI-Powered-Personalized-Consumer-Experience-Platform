@@ -244,7 +244,7 @@ class Agent:
                 except Exception: continue
 
             # ---------------------------------------------------------
-            # STATE 5: RANK & GROUP
+            # STATE 5: RANK & FILTER
             # ---------------------------------------------------------
             print("🔄 State: RANK")
             def price_to_number(p_str):
@@ -254,26 +254,11 @@ class Agent:
                 except Exception:
                     return float('inf')
 
+            # Sort by price (Low -> High)
             normalized.sort(key=lambda x: price_to_number(x.get("price")))
             
-            # Simple grouping
-            groups = {"Men": [], "Women": [], "Unisex": []}
-            lower_input = user_input.lower()
-            for item in normalized:
-                n = item["name"].lower()
-                if "women" in n or "women" in lower_input: groups["Women"].append(item)
-                elif "men" in n or "men" in lower_input: groups["Men"].append(item)
-                else: groups["Unisex"].append(item)
-
-            # Rebalance
-            for group in ("Men", "Women"):
-                while len(groups[group]) < 3 and groups["Unisex"]:
-                    groups[group].append(groups["Unisex"].pop(0))
-            
-            # Flatten for synthesis
-            final_list = []
-            for k, v in groups.items():
-                final_list.extend(v[:4]) # Top 4 per group max
+            # Take top 6 verified items
+            final_list = normalized[:6]
 
             # ---------------------------------------------------------
             # STATE 6: SYNTHESIZE (LLM Persona injection)
