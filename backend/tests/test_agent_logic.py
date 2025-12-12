@@ -91,7 +91,10 @@ class TestAgentLogic(unittest.TestCase):
         # Verify genai.configure was called with new key
         mock_configure.assert_called_with(api_key="key2")
 
-    def test_pure_llm_response_structure(self):
+        mock_configure.assert_called_with(api_key="key2")
+
+
+
         """Verify the agent processes LLM JSON output correctly without tools."""
         # Mock Chat Session
         mock_chat = MagicMock()

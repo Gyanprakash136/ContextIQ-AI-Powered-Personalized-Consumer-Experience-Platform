@@ -148,11 +148,28 @@ class Agent:
             "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
         }
 
+        # Store config for fallback re-initialization
+        self.model_name = model
+        self.tools = tools
+        self.instruction = instruction
+        self.safety = safety
+        
+        # Fallback Hierarchy: Requested -> Flash (Speed/Cost) -> Pro (Quality/Stability)
+        self.fallback_chain = []
+        if model not in ["gemini-1.5-flash", "gemini-1.5-pro"]:
+             self.fallback_chain.append(model)
+        self.fallback_chain.extend(["gemini-1.5-flash", "gemini-1.5-pro"])
+        
+        self.current_model_index = 0
+        self._init_model(self.fallback_chain[0])
+
+    def _init_model(self, model_name):
+        print(f"🤖 Initializing Agent with Model: {model_name}")
         self.model = genai.GenerativeModel(
-            model_name=model,
-            tools=tools,
-            system_instruction=instruction,
-            safety_settings=safety
+            model_name=model_name,
+            tools=self.tools,
+            system_instruction=self.instruction,
+            safety_settings=self.safety
         )
 
     def _send_message_with_retry(self, chat, content, retries: int = 10, backoff_base: int = 2):
@@ -166,43 +183,48 @@ class Agent:
                 if ("429" in err or "ResourceExhausted" in err or "Quota" in err):
                     print(f"⚠️ Quota Warning (Attempt {attempt + 1}/{retries + 1}): {err[:100]}...")
 
-                    # Intelligent Backoff: Check if error specifies a wait time
+                    # Intelligent Backoff
                     wait_match = re.search(r'retry in (\d+(\.\d+)?)s', err)
                     if wait_match:
                         forced_wait = float(wait_match.group(1))
-                        # Cap forced wait to avoid hanging forever (e.g. 10 mins), but honor small waits
                         if forced_wait < 120:
                              print(f"🛑 Upstream requested wait: {forced_wait}s. Sleeping...")
-                             time.sleep(forced_wait + 1) # Add buffer
-                             # Don't increment attempt if we explicitly waited? No, still increment to avoid infinite loop
+                             time.sleep(forced_wait + 1) 
                              attempt += 1
                              continue
                     
                     # Try to rotate key first
                     if self._rotate_api_key():
                         print("🔄 Switched to next API Key. Retrying immediately...")
-                        time.sleep(2) # Increased pause for config propagation
-                        
+                        time.sleep(2)
                         attempt += 1
                         if attempt > retries:
-                             print("❌ Max retries reached even after rotation.")
-                             # If we rotated but still ran out, raise
                              raise
                         continue
                     
-                    # If rotation failed (no more keys) or single key, use backoff
+                    # Backoff
                     if attempt < retries:
-                        wait_time = (attempt + 1) * 3 * backoff_base # Reduced multiplier since we have more retries
+                        wait_time = (attempt + 1) * 3 * backoff_base 
                         print(f"⏳ Waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
                         attempt += 1
                         continue
                 
-                # If we get here: either not a quota error, or we ran out of retries/rotations
                 print(f"❌ Unrecoverable Error or Retries Exhausted: {err}")
                 raise
 
         raise Exception(f"Max retries ({retries}) exceeded without success.")
+
+    def _switch_model(self) -> bool:
+        """Switches to the next model in the fallback chain."""
+        next_idx = self.current_model_index + 1
+        if next_idx < len(self.fallback_chain):
+            self.current_model_index = next_idx
+            new_model = self.fallback_chain[next_idx]
+            print(f"⚠️ Primary model failed. Falling back to: {new_model}")
+            self._init_model(new_model)
+            return True
+        return False
 
     def _rotate_api_key(self) -> bool:
         """
@@ -217,38 +239,24 @@ class Agent:
         if len(keys) < 2:
             return False
             
-        # Get current key (heuristic: check configured key if possible, or just cycle)
-        # Since we can't easily peek at current configured key, we'll maintain state in the Agent if possible
-        # But Agent is transient request-scoped in some designs. 
-        # Better approach: Try next key in list that isn't the current environment var GOOGLE_API_KEY
-        
-        # Better approach: Try next key in list that isn't the current environment var GOOGLE_API_KEY
-        
         current_key = os.getenv("GOOGLE_API_KEY")
         clean_current_key = "None"
         try:
-            # Robustly handle current_key if it contained extra chars
             if current_key:
                 clean_current_key = current_key.strip().strip("'").strip('"')
-            
-            # Find index of current key in clean list
             try:
                 current_index = keys.index(clean_current_key)
                 next_index = (current_index + 1) % len(keys)
             except ValueError:
-                # If current key not in list (weird state), start from 0
                 next_index = 0
         except Exception:
              next_index = 0
             
         new_key = keys[next_index]
-        
-        # Triple-check sanitation of new key
         new_key = new_key.strip().strip("'").strip('"')
 
         print(f"🔑 Rotating API Key: ...{clean_current_key[-4:] if len(clean_current_key) > 4 else clean_current_key} -> ...{new_key[-4:]}")
         
-        # Update Environment and GenAI Config
         os.environ["GOOGLE_API_KEY"] = new_key
         genai.configure(api_key=new_key)
         return True
@@ -258,80 +266,64 @@ class Agent:
         if isinstance(user_input, str):
             return user_input
         if isinstance(user_input, list):
-            # Extract only string parts
             text_parts = [p for p in user_input if isinstance(p, str)]
             return " ".join(text_parts)
         return str(user_input)
 
     def run(self, user_input: Any, chat_history: Optional[List[Dict[str, Any]]] = None, max_iterations: Optional[int] = None) -> AgentResponse:
+        """
+        Main entry point for "Pure Conversation" mode.
+        Incorporates Model Fallback Strategy.
+        """
         if chat_history is None:
             chat_history = []
-        if max_iterations is None:
-            max_iterations = self.max_iterations_default
-
-        chat = self.model.start_chat(history=chat_history, enable_automatic_function_calling=False)
-        self.valid_urls.clear()
         
-        # Safe text extraction for logic that needs string (logging, regex, fallback)
-        user_text_query = self._extract_text_from_input(user_input)
-        
-        # CLEANUP: Remove "User Message:" prefix if present (common in some frontends/test scripts)
-        user_text_query = re.sub(r'^(User Message:)\s*', '', user_text_query, flags=re.IGNORECASE).strip()
-        
-        consecutive_failures = 0
-        print(f"▶️ Pipeline Start: {user_text_query}")
-
-        try:
-            # ---------------------------------------------------------
-            # STATE 1: PLAN (Query Refinement OR Chat Detection)
-            # ---------------------------------------------------------
-            plan_prompt = (
-                "STATE=PLAN\n"
-                "Analyze the user's request.\n"
-                "1. If it is a Product Search (e.g., 'buy laptop', 'best shoes'), rewrite it into a concise marketplace query.\n"
-                "2. If it is General Conversation OR Complaint (e.g., 'Hi', 'Why did you fail?', 'This is bad'), respond EXACTLY with: SKIP_SEARCH\n"
-                "Respond with the single-line query OR 'SKIP_SEARCH' only. Do NOT call tools.\n\n"
-                f"User request: {user_text_query}\n"
-            )
-            print("🔄 State: PLAN")
-            plan_resp = self._send_message_with_retry(chat, plan_prompt)
-            plan_text = ""
-            if plan_resp.candidates and plan_resp.candidates[0].content.parts:
-                plan_text = "".join([p.text for p in plan_resp.candidates[0].content.parts if getattr(p, "text", None)])
-            plan_query = plan_text.strip().splitlines()[0] if plan_text else user_text_query
-            
-            skip_search = "SKIP_SEARCH" in plan_query
-            print(f"   Query: {plan_query} (Skip: {skip_search})")
-
-            # ---------------------------------------------------------
-            # STATE 2: SYNTHESIZE (LLM generates response based on chat history and optional products)
-            # ---------------------------------------------------------
-            final_list = []  # Empty list; model may generate its own products if desired.
-            print("🔄 State: SYNTHESIZE")
-            synthesis_prompt = (
-                "STATE=FORMAT\n"
-                f"User Output Logic:\n"
-                f"1. IF products are provided: Recommend them as a friendly Shopkeeper.\n"
-                f"2. IF products are EMPTY (Chat Mode): Respond naturally without inventing products.\n"
-                f"User Request: {user_text_query}\n"
-                f"Products Found: {json.dumps(final_list)}\n\n"
-                "TASK: Generate the Final JSON response.\n"
-                "Return ONLY valid JSON with keys: 'agent_response', 'products', 'predictive_insight'."
-            )
-            final_resp = self._send_message_with_retry(chat, synthesis_prompt)
-            final_text = ""
-            if final_resp.candidates and final_resp.candidates[0].content.parts:
-                final_text = final_resp.candidates[0].content.parts[0].text
-            final_json = extract_json(final_text)
-            if is_valid_json(final_json):
+        # 1. Start Chat Session (handling model fallback loop)
+        while True:
+            try:
+                # Need to use self.model which is current model (initially requested or fallback)
+                chat = self.model.start_chat(history=chat_history)
+                
+                # 2. PLAN Step
+                plan_prompt = (
+                    f"User Input: {user_input}\n"
+                    "State: PLAN\n"
+                    "Decide if external info is needed (SEARCH) or if you can answer directly (SKIP_SEARCH).\n"
+                    "Respond with JUST the query strings or 'SKIP_SEARCH'."
+                )
+                print("🔄 State: PLAN")
+                plan_resp = self._send_message_with_retry(chat, plan_prompt)
+                
+                if plan_resp.candidates and plan_resp.candidates[0].content.parts:
+                    raw_plan = plan_resp.text.strip()
+                else:
+                    raw_plan = "SKIP_SEARCH" 
+                    
+                print(f"   Query: {raw_plan}")
+                
+                # 3. SYNTHESIZE Step
+                synth_prompt = (
+                    f"Original User Input: {user_input}\n"
+                    f"Plan/Search Results: {raw_plan}\n" 
+                    "State: SYNTHESIZE\n"
+                    "Generate the final JSON response."
+                )
+                print("🔄 State: SYNTHESIZE")
+                final_resp = self._send_message_with_retry(chat, synth_prompt)
+                
+                json_text = extract_json(final_resp.text)
                 print("✅ Success.")
-                return AgentResponse(final_json, chat.history)
-            else:
-                print("⚠️ JSON Generation failed. Returning raw LLM output.")
-                return AgentResponse(final_text, chat.history)
-        except Exception as e:
-            print(f"🔥 Critical Pipeline Error: {e}")
-            raise
-
-
-
+                return AgentResponse(output=json_text)
+                
+            except Exception as e:
+                print(f"❌ Error in run loop: {e}")
+                # Try to switch models if we failed (likely due to persistent Quota issues)
+                if self._switch_model():
+                    print("🔁 Retrying entire run with new model...")
+                    time.sleep(1)
+                    continue
+                else:
+                     # No more models, re-raise
+                     raise e
+                     # No more models, re-raise
+                     raise e
