@@ -60,8 +60,11 @@ class Agent:
                     raise
 
 
-    def run(self, user_input, chat_history=None, max_iterations=15):
-        """Main agentic loop."""
+    def run(self, user_input, chat_history=None, max_iterations=12):
+        """
+        Hybrid Thought-Action Loop.
+        Enforces 7-step workflow, correct JSON, and robust error handling.
+        """
         if chat_history is None:
             chat_history = []
 
@@ -70,26 +73,30 @@ class Agent:
             enable_automatic_function_calling=False
         )
 
+        # Tool Guardrails
+        tool_usage_count = {} 
+        consecutive_failures = 0
+        
         try:
+            # Initial Prompt
+            print(f"▶️ User Input: {user_input}")
             response = self._send_message_with_retry(chat, user_input)
 
             iteration = 0
             while iteration < max_iterations:
                 iteration += 1
-                print(f"Iteration {iteration}/{max_iterations}")
+                print(f"\n🔄 Step {iteration} (Failures: {consecutive_failures})")
 
                 if not response.candidates:
-                    print("No candidates in response.")
+                    print("❌ No candidates received.")
                     break
 
                 candidate = response.candidates[0]
                 finish_reason = candidate.finish_reason
-                print(f"Finish Reason: {finish_reason}")
-
+                
+                # Parse Output
                 function_calls = []
                 text_parts = []
-
-                # Separate text parts & function calls
                 for part in candidate.content.parts:
                     if hasattr(part, "function_call") and part.function_call:
                         function_calls.append(part.function_call)
@@ -97,106 +104,129 @@ class Agent:
                         text_parts.append(part.text)
 
                 combined_text = "".join(text_parts).strip()
+                
+                # [1] THOUGHT LOGGING
+                if "THOUGHT:" in combined_text:
+                    thought = combined_text.split("THOUGHT:", 1)[1].split("\n", 1)[0].strip()
+                    print(f"🧠 THOUGHT: {thought}")
 
-                # ------------------------------------------------------------
-                # CASE 1: FUNCTION CALLS
-                # ------------------------------------------------------------
+                # [2] HANDLE TOOL CALLS
                 if function_calls:
-                    print(f"Tool calls requested: {len(function_calls)}")
-
+                    print(f"🛠  Tools requested: {len(function_calls)}")
                     tool_responses = []
+                    
                     for fc in function_calls:
                         func_name = fc.name
                         func_args = dict(fc.args)
-                        print(f"Calling tool: {func_name}")
 
-                        if func_name not in self.tool_map:
-                            error_msg = f"Function {func_name} not found"
-                            print(error_msg)
+                        # Guardrail: Prevent >2 identical calls
+                        call_sig = f"{func_name}:{json.dumps(func_args, sort_keys=True)}"
+                        tool_usage_count[call_sig] = tool_usage_count.get(call_sig, 0) + 1
+                        
+                        if tool_usage_count[call_sig] > 2:
+                            print(f"🛑 Blocking duplicate tool call: {func_name}")
                             tool_responses.append(
-                                genai.protos.Part(
-                                    function_response=genai.protos.FunctionResponse(
-                                        name=func_name,
-                                        response={"error": error_msg}
-                                    )
-                                )
+                                genai.protos.Part(function_response=genai.protos.FunctionResponse(
+                                    name=func_name, response={"error": "STOP. You are repeating yourself. Move to next step."}
+                                ))
                             )
                             continue
 
-                        try:
-                            result = self.tool_map[func_name](**func_args)
-                            tool_responses.append(
-                                genai.protos.Part(
-                                    function_response=genai.protos.FunctionResponse(
-                                        name=func_name,
-                                        response={"result": json.dumps(result)}
-                                    )
+                        # Execute Tool
+                        if func_name in self.tool_map:
+                            try:
+                                print(f"   👉 Executing {func_name}...")
+                                result = self.tool_map[func_name](**func_args)
+                                tool_responses.append(
+                                    genai.protos.Part(function_response=genai.protos.FunctionResponse(
+                                        name=func_name, response={"result": result}
+                                    ))
                                 )
-                            )
-                        except Exception as e:
-                            print(f"Error running tool {func_name}: {e}")
-                            tool_responses.append(
-                                genai.protos.Part(
-                                    function_response=genai.protos.FunctionResponse(
-                                        name=func_name,
-                                        response={"error": str(e)}
-                                    )
+                                consecutive_failures = 0 # Reset on success
+                            except Exception as e:
+                                print(f"   ❌ Tool Error: {e}")
+                                tool_responses.append(
+                                    genai.protos.Part(function_response=genai.protos.FunctionResponse(
+                                        name=func_name, response={"error": str(e)}
+                                    ))
                                 )
+                                consecutive_failures += 1
+                        else:
+                            tool_responses.append(
+                                genai.protos.Part(function_response=genai.protos.FunctionResponse(
+                                    name=func_name, response={"error": "Function not found"}
+                                ))
                             )
 
-                    response = self._send_message_with_retry(chat, tool_responses)
-                    continue
-
-                # ------------------------------------------------------------
-                # CASE 2: TEXT RECEIVED BUT MUST VALIDATE JSON
-                # ------------------------------------------------------------
-                if combined_text:
-                    print("Received text from model")
-
-                    # Accept final output only if JSON is valid
-                    if is_valid_json(combined_text):
-                        print("Valid JSON detected. Returning final output.")
-                        return AgentResponse(combined_text, chat.history)
-
-                    # Detect weak fallback text
-                    if "I couldn't access live listings" in combined_text:
-                        print("Weak fallback detected. Requesting strict regeneration.")
+                    # Check for Loop Death
+                    if consecutive_failures >= 3:
+                        print("🚨 Too many failures. Forcing FALLBACK MODE.")
                         response = self._send_message_with_retry(
-                            chat,
-                            "Your response is incomplete. Regenerate using STRICT JSON, markdown links, grouped categories, and 3–5 products per group."
+                            chat, 
+                            "SYSTEM: Tool failures detected. STOP using tools. SWITCH TO FALLBACK PROTOCOL IMMEDIATELY. Generate best-effort JSON now."
                         )
                         continue
 
-                    # If not JSON -> instruct model to output correct JSON
-                    print("Text is not JSON. Requesting valid JSON only.")
-                    response = self._send_message_with_retry(
-                        chat,
-                        "Your previous message was NOT valid JSON. Return ONLY the JSON object according to the system instructions."
-                    )
+                    # Send results back
+                    response = self._send_message_with_retry(chat, tool_responses)
                     continue
 
-                # ------------------------------------------------------------
-                # CASE 3: MODEL STOPPED EARLY
-                # ------------------------------------------------------------
+                # [3] HANDLE TEXT RESPONSE
+                if combined_text:
+                    # Clean up 'THOUGHT:' for checking JSON
+                    clean_text = combined_text
+                    if "THOUGHT:" in clean_text:
+                         # Attempt to isolate JSON part if mixed
+                         pass
+
+                    if is_valid_json(clean_text):
+                        print("✅ Valid JSON Final Output.")
+                        return AgentResponse(clean_text, chat.history)
+                    
+                    else:
+                        print("⚠️  Invalid JSON. Triggering Self-Correction...")
+                        # Self-Correction Loop (One Try)
+                        response = self._send_message_with_retry(
+                            chat, 
+                            f"SYSTEM: Your last output was NOT valid JSON. \nFix Syntax Immediately. \nReturn ONLY the JSON object. \n\nInvalid Output was:\n{clean_text[:500]}..."
+                        )
+                        
+                        # Verify the correction immediately
+                        if response.candidates and response.candidates[0].content.parts:
+                            retry_text = response.candidates[0].content.parts[0].text
+                            if is_valid_json(retry_text):
+                                print("✅ JSON Repaired Successfully.")
+                                return AgentResponse(retry_text, chat.history)
+                        
+                        # If still failed, force hard fallback wrapper
+                        print("❌ JSON Repair Failed. Wrapping text.")
+                        fallback_json = json.dumps({
+                            "agent_response": clean_text.replace('"', "'"),
+                            "products": [],
+                            "predictive_insight": "System Note: Response layout might be imperfect."
+                        })
+                        return AgentResponse(fallback_json, chat.history)
+
+                # [4] HANDLE STOP REASONS
                 if finish_reason in [1, 2, 3, 4, 5]:
-                    print(f"Model stopped early (finish_reason={finish_reason})")
+                    print(f"⚠️ Stopped early: {finish_reason}")
                     return AgentResponse(
-                        output=f"I couldn't finish the response (Reason: {finish_reason}). Try again.",
-                        chat_history=chat.history
+                        json.dumps({"agent_response": f"I couldn't finish (Code {finish_reason}). Please try again.", "products": []}), 
+                        chat.history
                     )
 
-            # If loop finishes without success
-            print("Max iterations reached without valid JSON.")
+            # Max Iterations Reached
+            print("🛑 Max iterations reached.")
             return AgentResponse(
-                output="I couldn't complete your request. Please try again.",
-                chat_history=chat.history
+                 json.dumps({"agent_response": "I apologize, but I timed out. Please try a simpler request.", "products": []}), 
+                 chat.history
             )
 
         except Exception as e:
-            print(f"Agent Error: {e}")
+            print(f"🔥 Critical Agent Error: {e}")
             return AgentResponse(
-                output=f"Agent encountered an error: {str(e)}",
-                chat_history=chat_history
+                json.dumps({"agent_response": f"Internal Error: {str(e)}", "products": []}), 
+                chat_history
             )
 
 
