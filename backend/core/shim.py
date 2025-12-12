@@ -173,9 +173,12 @@ class Agent:
                                 chat_history=chat.history
                             )
                         else:
+                            )
+                        else:
                              # Fallback if no text found
+                            print(f"❌ Stop Reason: {candidate.finish_reason}. Safety ratings: {candidate.safety_ratings}")
                             return AgentResponse(
-                                output="I apologize, but I couldn't generate a complete response. Please try again.",
+                                output=f"I couldn't finish the response (Reason: {candidate.finish_reason}). Please try rephrasing.",
                                 chat_history=chat.history
                             )
 
