@@ -173,8 +173,7 @@ class Agent:
                                 chat_history=chat.history
                             )
                         else:
-                            )
-                        else:
+
                              # Fallback if no text found
                             print(f"❌ Stop Reason: {candidate.finish_reason}. Safety ratings: {candidate.safety_ratings}")
                             return AgentResponse(
