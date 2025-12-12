@@ -156,6 +156,9 @@ class Agent:
         # Safe text extraction for logic that needs string (logging, regex, fallback)
         user_text_query = self._extract_text_from_input(user_input)
         
+        # CLEANUP: Remove "User Message:" prefix if present (common in some frontends/test scripts)
+        user_text_query = re.sub(r'^(User Message:)\s*', '', user_text_query, flags=re.IGNORECASE).strip()
+        
         consecutive_failures = 0
         print(f"▶️ Pipeline Start: {user_text_query}")
 
