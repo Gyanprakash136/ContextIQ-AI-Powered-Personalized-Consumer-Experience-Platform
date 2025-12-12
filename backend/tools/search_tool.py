@@ -17,16 +17,15 @@ def search_web(query: str, max_results: int = 5) -> str:
     results = []
     try:
         with DDGS() as ddgs:
-            # We use 'text' search (formerly 'news' or others)
-            # region='in-en' optimizes for India (English)
-            # region='in-en' optimizes for India (English)
-            # Limit to 10 results to give agent more real link options
-            ddgs_gen = ddgs.text(query, region="in-en", max_results=10)
+            # General search without region constraint to avoid ip blocking issues
+            # formerly 'news' or others
+            ddgs_gen = ddgs.text(query, max_results=10)
             for r in ddgs_gen:
                 results.append(f"Title: {r['title']}\nLink: {r['href']}\nSnippet: {r['body']}\n")
     except Exception as e:
-        print(f"❌ Search Error: {e}")
-        return f"Error searching web: {e}"
+        print(f"❌ Search Error (DDG): {e}")
+        # Return a helpful error message to the agent so it knows what happened
+        return f"Error searching web: {e}. Try asking the user for more specific details."
 
     if not results:
         return "No results found."
