@@ -85,3 +85,63 @@ async def chat_endpoint(
     except Exception as e:
         print(f"❌ Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/agent/history")
+async def get_history(token_data: dict = Depends(verify_firebase_token)):
+    user_id = token_data.get("uid")
+    sessions = session_manager.list_user_sessions(user_id)
+    return sessions
+
+@app.get("/agent/session/{session_id}")
+async def get_session_details(session_id: str, token_data: dict = Depends(verify_firebase_token)):
+    """Fetch messages for a specific session."""
+    user_id = token_data.get("uid")
+    data = session_manager.load_session(session_id)
+    
+    if not data or data.get("user_id") != user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    messages = []
+    for msg in data["history"]:
+        role = "user" if msg.role == "user" else "assistant"
+        content = msg.parts[0].text if msg.parts else ""
+        messages.append({"role": role, "content": content})
+        
+    return {"title": data.get("title"), "messages": messages}
+
+from pydantic import BaseModel
+class TitleRequest(BaseModel):
+    session_id: str
+
+@app.post("/agent/title")
+async def generate_title(req: TitleRequest, token_data: dict = Depends(verify_firebase_token)):
+    """Generate a title for the session based on context."""
+    user_id = token_data.get("uid")
+    data = session_manager.load_session(req.session_id)
+    
+    if not data or data.get("user_id") != user_id:
+         raise HTTPException(status_code=404, detail="Session not found")
+         
+    history = data["history"]
+    if not history:
+        return {"title": "New Chat"}
+    
+    # Simple heuristic title generation
+    first_msg = None
+    for msg in history:
+        if msg.role == "user":
+            first_msg = msg.parts[0].text
+            break
+            
+    if not first_msg:
+        return {"title": "New Chat"}
+        
+    words = first_msg.split()[:4]
+    title = " ".join(words).title()
+    
+    session_manager.save_session(req.session_id, history, title=title)
+    return {"title": title}
+
+@app.get("/health")
+def health_check():
+    return {"status": "ContextIQ is Online"}
