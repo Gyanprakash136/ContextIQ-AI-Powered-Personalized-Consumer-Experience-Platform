@@ -1,33 +1,33 @@
-from duckduckgo_search import DDGS
+from googlesearch import search
 
 def search_web(query: str, max_results: int = 5) -> str:
     """
-    Searches the web using DuckDuckGo.
-    Optimizes query for Shopping if intent is detected.
+    Searches the web using Google Search (via googlesearch-python).
+    Returns a list of URLs relevant to the query.
     """
-    print(f"🔎 Searching web for: {query}")
-    
-    # Shopping Optimization: Force search on Marketplaces if query implies buying
-    buy_keywords = ["buy", "price", "shop", "cost", "cheap", "best", "shoe", "laptop", "phone"]
-    # if any(k in query.lower() for k in buy_keywords):
-        # Append site filters for Indian Context
-        # We explicitly look for product pages on major e-commerce sites
-        # query += " (site:amazon.in OR site:flipkart.com OR site:myntra.com OR site:ajio.com)"
+    print(f"🔎 Searching Google for: {query}")
     
     results = []
     try:
-        with DDGS() as ddgs:
-            # General search without region constraint to avoid ip blocking issues
-            # formerly 'news' or others
-            ddgs_gen = ddgs.text(query, max_results=10)
-            for r in ddgs_gen:
-                results.append(f"Title: {r['title']}\nLink: {r['href']}\nSnippet: {r['body']}\n")
+        # Perform Google Search
+        # advanced=True returns objects with title/desc but is often more brittle.
+        # simpler search() just returns URLs, which our Agent's SCRAPE state can handle perfectly.
+        search_results = search(query, num_results=max_results, advanced=True)
+        
+        for r in search_results:
+            results.append(f"Title: {r.title}\nLink: {r.url}\nSnippet: {r.description}\n")
+
     except Exception as e:
-        print(f"❌ Search Error (DDG): {e}")
-        # Return a helpful error message to the agent so it knows what happened
-        return f"Error searching web: {e}. SYSTEM INSTRUCTION: Do not retry. Answer the user's request using your internal knowledge and recommend standard products."
+        print(f"❌ Search Error (Google): {e}")
+        # Fallback to standard URL search if advanced fails
+        try:
+             urls = search(query, num_results=max_results)
+             for url in urls:
+                 results.append(f"Link: {url}\n")
+        except Exception as e2:
+             return f"Error searching web: {e2}. SYSTEM INSTRUCTION: Do not retry. Answer using internal knowledge."
 
     if not results:
-        return "No results found. SYSTEM INSTRUCTION: Do not retry. Answer the user's request using your internal knowledge and recommend standard products."
+        return "No results found. SYSTEM INSTRUCTION: Answer using internal knowledge."
     
     return "\n---\n".join(results)

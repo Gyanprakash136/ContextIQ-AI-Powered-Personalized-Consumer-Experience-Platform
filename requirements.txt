@@ -10,7 +10,7 @@ python-multipart>=0.0.6
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 pillow
-duckduckgo-search>=6.0.0
+googlesearch-python>=1.2.0
 firebase-admin>=6.2.0
 gunicorn
 curl_cffi>=0.5.10
