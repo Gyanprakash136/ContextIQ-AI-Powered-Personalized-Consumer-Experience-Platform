@@ -196,9 +196,11 @@ class Agent:
         # But Agent is transient request-scoped in some designs. 
         # Better approach: Try next key in list that isn't the current environment var GOOGLE_API_KEY
         
+        clean_current_key = "None"
         try:
             # Robustly handle current_key if it contained extra chars
-            clean_current_key = current_key.strip().strip("'").strip('"')
+            if current_key:
+                clean_current_key = current_key.strip().strip("'").strip('"')
             
             # Find index of current key in clean list
             try:
@@ -215,7 +217,7 @@ class Agent:
         # Triple-check sanitation of new key
         new_key = new_key.strip().strip("'").strip('"')
 
-        print(f"🔑 Rotating API Key: ...{clean_current_key[-4:] if clean_current_key else 'None'} -> ...{new_key[-4:]}")
+        print(f"🔑 Rotating API Key: ...{clean_current_key[-4:] if len(clean_current_key) > 4 else clean_current_key} -> ...{new_key[-4:]}")
         
         # Update Environment and GenAI Config
         os.environ["GOOGLE_API_KEY"] = new_key
