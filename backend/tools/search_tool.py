@@ -6,7 +6,6 @@ except ImportError:
     print("⚠️ 'googlesearch-python' not found. Falling back to DuckDuckGo.")
 
 try:
-    from botocore.exceptions import BotoCoreError # Dummy import to check env
     from duckduckgo_search import DDGS
     DDG_AVAILABLE = True
 except ImportError:

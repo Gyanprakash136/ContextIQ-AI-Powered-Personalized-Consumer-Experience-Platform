@@ -10,3 +10,4 @@ frontend/.env
 serviceAccountKey.json
 .env
 frontend/
+storage/
